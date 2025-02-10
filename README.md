@@ -76,12 +76,15 @@ SeqNeighbor qvt -i encode_dir/ -o query_target_neighbor.tsv -d GaussianRP -n 500
 ### encode command
 If your input query file and target file are not same, the output files will be saved at output directory.
 Including following files:
-1. target_feature_matrix.npz and query_feature_matrix.npz
-These files contain encoded numerical features from fasta file.
-2. query_name.txt and target_name.txt
-These files saves read names as lists,because feature matrix only contain sequences' index but not sequences' names.
+1. `target_feature_matrix.npz` and `query_feature_matrix.npz`
 
-If your input query file and target file are same, the query_name.txt and target_name.txt will be substitute to one read_name.txt file.
+These files contain encoded numerical features from fasta file.
+
+2. `query_name.txt` and `target_name.txt`
+
+These files saves read names as lists, because feature matrix only contain sequence's index but not sequence's names.
+
+If your input query file and target file are same, the `query_name.txt` and `target_name.txt` will be substitute to one `read_name.txt` file.
 
 ### qvt command
 The qvt command only output one tsv file contain neighbor information, including read names, similarity metric and neighbor rank.
