@@ -62,6 +62,7 @@ options:
   --knn-config KNN_CONFIG
                         Path to the JSON configuration file for specifying knn parameters. (default: None)
 ```
+
 ## Example 
 ```
 SeqNeighbor encode -q query.fasta -t target.fasta -o encode_dir/ -p IDF -k 21
@@ -74,17 +75,27 @@ SeqNeighbor qvt -i encode_dir/ -o query_target_neighbor.tsv -d GaussianRP -n 500
 ```
 ## Output
 ### encode command
-If your input query file and target file are not same, the output files will be saved at output directory.
-Including following files:
-1. `target_feature_matrix.npz` and `query_feature_matrix.npz`
+1. If your input query file and target file are not same, output directory will includ following files:
+
+- `target_feature_matrix.npz` and `query_feature_matrix.npz`
 
 These files contain encoded numerical features from fasta file.
 
-2. `query_name.txt` and `target_name.txt`
+- `query_name.txt` and `target_name.txt`
 
 These files saves read names as lists, because feature matrix only contain sequence's index but not sequence's names.
 
-If your input query file and target file are same, the `query_name.txt` and `target_name.txt` will be substitute to one `read_name.txt` file.
+2. If your input query file and target file are same, output directory will includ following files:
+
+- `feature_matrix.npz`
+
+- `read_name.txt`
+
+SeqNeighbor will detect this is an all-versus-all task and avoid duplicate calculations.
+
+> [!TIP]
+> If you wish to **explore alternative encoding methods**, you can manually encode the sequences and save the resulting matrix and the sequence ID list using the above specified filenames. Making the directory input of qvt command, now you can execute `qvt` kNN search utilizing your custom encoding approach.
+
 
 ### qvt command
 The qvt command only output one tsv file contain neighbor information, including read names, similarity metric and neighbor rank.
