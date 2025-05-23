@@ -93,7 +93,7 @@ def parse_command_line_arguments():
         help="Percentage of k-mer used to build feature matrix."
         )
     mode1_parser.add_argument(
-        "--kmer-sample-seed", type=float, required=False, default=356115, 
+        "--kmer-sample-seed", type=int, required=False, default=356115, 
         help="Seed used for randomly sampling k-mers."
         )
     mode1_parser.add_argument(
