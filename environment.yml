@@ -24,7 +24,7 @@ dependencies:
   - networkx
   - ipykernel
   - scipy
-  - isal
+  - python-isal
   - pynear
   - colorlog
   - xxhash
