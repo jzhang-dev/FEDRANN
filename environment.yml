@@ -25,6 +25,5 @@ dependencies:
   - ipykernel
   - scipy
   - python-isal
-  - pynear
   - colorlog
   - xxhash
