@@ -55,7 +55,9 @@ class ExactNearestNeighbors(_NearestNeighbors):
         self,        
         ref: np.ndarray,
         que: np.ndarray,
-        metric="cosine", n_neighbors: int = 20
+        metric="cosine",
+        n_neighbors: int = 20,
+        threads: int | None = 64
     ):
 
         if metric == "jaccard" and isinstance(data, csr_matrix):
@@ -66,7 +68,7 @@ class ExactNearestNeighbors(_NearestNeighbors):
             _metric = metric
 
         nbrs = sklearn.neighbors.NearestNeighbors(
-            n_neighbors=n_neighbors, metric=_metric
+            n_neighbors=n_neighbors, metric=_metric,n_jobs=threads
         )
         nbrs.fit(ref)
         nbr_distance, nbr_indices = nbrs.kneighbors(que)
@@ -82,7 +84,7 @@ class NNDescent(_NearestNeighbors):
         *,
         n_trees: int = 100,
         low_memory: bool = True,
-        n_jobs: int | None = None,
+        threads: int | None = None,
         seed: int | None = 683985,
         verbose: bool = True,
     ):
@@ -92,7 +94,7 @@ class NNDescent(_NearestNeighbors):
             n_neighbors=n_neighbors,
             n_trees=n_trees,
             low_memory=low_memory,
-            n_jobs=n_jobs,
+            n_jobs=threads,
             random_state=seed,
             verbose=verbose,
         )
@@ -109,6 +111,7 @@ class ProductQuantization(_NearestNeighbors):
         n_neighbors: int,
         metric: Literal["euclidean","cosine"] = "euclidean",
         *,
+        threads: int = 64,
         m=8,
         nbits=8,
         seed=455390,
@@ -127,7 +130,7 @@ class ProductQuantization(_NearestNeighbors):
             que = que[:, feature_indices]
         else:
             new_feature_count = feature_count
-
+        faiss.omp_set_num_threads(threads)
         if metric == "euclidean":
             measure = faiss.METRIC_L2
         else:
@@ -206,6 +209,7 @@ class SimHash(_NearestNeighbors):
         ref: np.ndarray,
         que: np.ndarray,
         n_neighbors: int,
+        threads: int = 10,
         repeats=400,
         seed=20141025,
     ) -> np.ndarray:
@@ -222,285 +226,3 @@ class SimHash(_NearestNeighbors):
         nbr_indices = np.array(vptree_indices)[:, :-1][:, ::-1]
         nbr_distance = np.array(vptree_distances)[:, :-1][:, ::-1]
         return nbr_indices,nbr_distance
-
-class LowHash(_NearestNeighbors):
-
-    @staticmethod
-    def _hash(x: int, seed: int) -> int:
-        hash_value = mmh3.hash(str(x), seed=int(seed))
-        return hash_value
-
-    @staticmethod
-    def _get_hash_values(data: Iterable[int], repeats: int, seed: int) -> np.ndarray:
-        rng = np.random.default_rng(seed)
-        hash_seeds = rng.integers(low=0, high=2**32 - 1, size=repeats, dtype=np.uint64)
-        hash_values = []
-        for k in range(repeats):
-            s = hash_seeds[k]
-            for x in data:
-                hash_values.append(LowHash._hash(x, seed=s))
-        hash_values = np.array(hash_values, dtype=np.int64)
-        return hash_values
-
-    @staticmethod
-    def _get_lowhash_count(
-        hash_count: int,
-        lowhash_fraction: float | None = None,
-        lowhash_count: int | None = None,
-    ) -> int:
-        if lowhash_fraction is None and lowhash_count is None:
-            raise TypeError(
-                "Either `lowhash_fraction` or `lowhash_count` must be specified."
-            )
-        if lowhash_fraction is not None and lowhash_count is not None:
-            raise TypeError(
-                f"`lowhash_fraction` and `lowhash_count` cannot be specified at the same time. {lowhash_fraction=} {lowhash_count=}"
-            )
-
-        if lowhash_fraction is not None:
-            lowhash_count = ceil(hash_count * lowhash_fraction)
-            lowhash_count = max(lowhash_count, 1)
-        if lowhash_count is None:
-            raise ValueError()
-        return lowhash_count
-
-    def _lowhash(
-        self,
-        data: np.ndarray,
-        repeats: int,
-        lowhash_fraction: float | None,
-        lowhash_count: int | None = None,
-        seed: int = 5731343,
-        verbose=True,
-    ) -> csr_matrix:
-
-        sample_count, feature_count = data.shape
-        buckets = sparse.dok_matrix(
-            (feature_count * repeats, sample_count), dtype=np.bool_
-        )
-
-        # Calculate hash values
-        hash_values = self._get_hash_values(
-            np.arange(feature_count), repeats=repeats, seed=seed
-        )
-
-        # For each sample, find the lowest hash values for its features
-        for j in range(sample_count):
-            feature_indices = sparse.find(data[j, :] > 0)[1]
-            hash_count = feature_indices.shape[0]
-            sample_lowhash_count = self._get_lowhash_count(
-                hash_count=hash_count,
-                lowhash_fraction=lowhash_fraction,
-                lowhash_count=lowhash_count,
-            )
-            for k in range(repeats):
-                bucket_indices = feature_indices + (k * feature_count)
-                sample_hash_values = hash_values[bucket_indices]
-                low_hash_buckets = bucket_indices[
-                    np.argsort(sample_hash_values)[:sample_lowhash_count]
-                ]
-                buckets[low_hash_buckets, j] = 1
-            if verbose and j % 1000 == 0:
-                print(j, end=" ")
-        if verbose:
-            print("")
-        buckets = sparse.csr_matrix(buckets)
-        return buckets
-
-    def _get_adjacency_matrix(
-        self,
-        ref_reads_num: int,
-        buckets: csr_matrix,
-        n_neighbors: int,
-        min_bucket_size,
-        max_bucket_size,
-        min_cooccurence_count,
-    ) -> np.ndarray:
-
-        # Select neighbor candidates based on cooccurence counts
-        row_sums = buckets.sum(axis=1).A1  # type: ignore
-        matrix = buckets[
-            (row_sums >= min_bucket_size) & (row_sums <= max_bucket_size), :
-        ].astype(np.uint8)
-        print(matrix.shape)
-        ref_matrix = matrix[:,:ref_reads_num]
-        que_matrix = matrix[:,ref_reads_num:]
-        cooccurrence_matrix = que_matrix.T.dot(ref_matrix) 
-        print(cooccurrence_matrix.shape)
-        sparse.save_npz('/home/miaocj/docker_dir/kNN-overlap-finder/data/evaluation/metagenome/bacteria/pbsim_ONT_95_20k/kmer_16/cooccurrence_matrix.npz', cooccurrence_matrix)
-        neighbor_dict = collections.defaultdict(dict)
-        nonzero_indices = list(zip(*cooccurrence_matrix.nonzero()))
-        for i, j in nonzero_indices:
-            if i >= j:
-                continue
-            count = cooccurrence_matrix[i, j]
-            neighbor_dict[i][j] = count
-            neighbor_dict[j][i] = count
-
-        # Construct neighbor matrix
-        n_rows = que_matrix.shape[1]
-        nbr_matrix = np.empty((n_rows, n_neighbors), dtype=np.int64)
-        nbr_distance = np.empty((n_rows, n_neighbors), dtype=np.int64)
-        nbr_matrix[:, :] = -1
-        nbr_distance[:, :] = -1
-        for i in range(n_rows):
-            row_nbr_dict = {
-                j: count
-                for j, count in neighbor_dict[i].items()
-                if count >= min_cooccurence_count
-            }
-            neighbors = list(
-                sorted(row_nbr_dict, key=lambda x: row_nbr_dict[x], reverse=True)
-            )[:n_neighbors]
-            nbr_matrix[i, : len(neighbors)] = (
-                neighbors  # len(neighbors) could be smaller than n_neighbors
-            )
-        nbr_distance[i, :len(neighbors)] = [row_nbr_dict[j] for j in neighbors]
-
-        return nbr_matrix,nbr_distance
-
-    def get_neighbors(
-        self,
-        ref: np.ndarray,
-        que: np.ndarray,
-        n_neighbors: int,
-        lowhash_fraction: float | None = None,
-        lowhash_count: int | None = None,
-        repeats=100,
-        min_bucket_size=2,
-        max_bucket_size=float("inf"),
-        min_cooccurence_count=1,
-        *,
-        seed=1,
-        verbose=True,
-    ) -> np.ndarray:
-        data = sparse.vstack([ref,que])
-        ref_reads_num = ref.shape[0]
-        buckets = self._lowhash(
-            data,
-            repeats=repeats,
-            lowhash_fraction=lowhash_fraction,
-            lowhash_count=lowhash_count,
-            seed=seed,
-            verbose=verbose,
-        )
-        nbr_matrix,nbr_distance = self._get_adjacency_matrix(
-            ref_reads_num,
-            buckets,
-            n_neighbors=n_neighbors,
-            min_bucket_size=min_bucket_size,
-            max_bucket_size=max_bucket_size,
-            min_cooccurence_count=min_cooccurence_count,
-        )
-        return nbr_matrix,nbr_distance
-
-class WeightedLowHash(LowHash):
-
-    def _pcws_low_hash(
-        self,
-        data: np.ndarray,
-        lowhash_fraction: float | None = None,
-        lowhash_count: int | None = None,
-        repeats=1,
-        *,
-        seed=1,
-        use_weights=True,
-        verbose=True,
-    ) -> csr_matrix:
-        data = data.T.copy()  # rows for features; columns for instances
-        if not use_weights:
-            data[data > 0] = 1
-        feature_count, sample_count = data.shape
-        lowhash_buckets = sparse.dok_matrix(
-            (feature_count * repeats, sample_count), dtype=np.bool_
-        )
-
-        dimension_count = repeats
-        # fingerprints_k = np.zeros((instance_num, dimension_num))
-
-        rng = np.random.default_rng(seed)
-        beta = rng.uniform(0, 1, (feature_count, dimension_count))
-        x = rng.uniform(0, 1, (feature_count, dimension_count))
-        u1 = rng.uniform(0, 1, (feature_count, dimension_count))
-        u2 = rng.uniform(0, 1, (feature_count, dimension_count))
-
-        for j_sample in range(0, sample_count):
-            feature_indices = sparse.find(data[:, j_sample] > 0)[0]
-            gamma = -np.log(np.multiply(u1[feature_indices, :], u2[feature_indices, :]))
-            t_matrix = np.floor(
-                np.divide(
-                    matlib.repmat(
-                        np.log(data[feature_indices, j_sample].todense()),
-                        1,
-                        dimension_count,
-                    ),
-                    gamma,
-                )
-                + beta[feature_indices, :]
-            )
-            y_matrix = np.exp(np.multiply(gamma, t_matrix - beta[feature_indices, :]))
-            a_matrix = np.divide(
-                -np.log(x[feature_indices, :]),
-                np.divide(y_matrix, u1[feature_indices, :]),
-            )
-
-            hash_count = feature_indices.shape[0]
-            sample_lowhash_count = self._get_lowhash_count(
-                hash_count=hash_count,
-                lowhash_fraction=lowhash_fraction,
-                lowhash_count=lowhash_count,
-            )
-            lowhash_positions = np.argsort(a_matrix, axis=0)[:sample_lowhash_count]
-            lowhash_features = feature_indices[lowhash_positions]
-
-            bucket_indices = []
-            for k in range(repeats):
-                features = lowhash_features[:, k]
-                bucket_indices.append(features + k * feature_count)
-
-            lowhash_buckets[np.concatenate(bucket_indices), j_sample] = 1
-
-            if verbose and j_sample % 1_000 == 0:
-                print(j_sample, end=" ")
-        if verbose:
-            print("")
-        lowhash_buckets = sparse.csr_matrix(lowhash_buckets)
-        return lowhash_buckets
-
-    def get_neighbors(
-        self,
-        ref: np.ndarray,
-        que: np.ndarray,
-        n_neighbors: int,
-        lowhash_fraction: float | None = None,
-        lowhash_count: int | None = None,
-        repeats=100,
-        min_bucket_size=2,
-        max_bucket_size=float("inf"),
-        min_cooccurence_count=1,
-        *,
-        seed=1,
-        use_weights=True,
-        verbose=True,
-    ) -> np.ndarray:
-        data = sparse.vstack([ref,que])
-        ref_reads_num = ref.shape[0]
-        buckets = self._pcws_low_hash(
-            data,
-            repeats=repeats,
-            lowhash_fraction=lowhash_fraction,
-            lowhash_count=lowhash_count,
-            seed=seed,
-            use_weights=use_weights,
-            verbose=verbose,
-        )
-        nbr_matrix,nbr_distance = self._get_adjacency_matrix(
-            ref_reads_num,
-            buckets,
-            n_neighbors=n_neighbors,
-            min_bucket_size=min_bucket_size,
-            max_bucket_size=max_bucket_size,
-            min_cooccurence_count=min_cooccurence_count,
-        )
-        return nbr_matrix,nbr_distance
-    

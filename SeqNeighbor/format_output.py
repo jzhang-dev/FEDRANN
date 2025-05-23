@@ -15,7 +15,7 @@ def format_output(
     for query_index in range(0,neighbor_matrix.shape[0]):
         query_name = query_read_ids[query_index] 
         neighbors = neighbor_matrix[query_index]
-        for target_rank,target_id in enumerate(neighbors):
+        for target_rank,target_id in enumerate(neighbors[1:]):
             target_name = target_read_ids[target_id]
             query_names.append(query_name)
             target_names.append(target_name)

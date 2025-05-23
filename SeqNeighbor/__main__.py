@@ -14,15 +14,34 @@ import numpy as np
 from numpy import matlib, ndarray
 from . import __version__, __description__ 
 import logging
-logging.getLogger("faiss.loader").setLevel(logging.WARNING)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+import colorlog
+log_colors_config = {
+    'DEBUG': 'cyan',
+    'INFO': 'green',
+    'WARNING': 'yellow',
+    'ERROR': 'red',
+    'CRITICAL': 'bold_red'
+}
+
+logger = logging.getLogger('colorlog')
+logger.setLevel(logging.DEBUG)
+
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.DEBUG)
+
+console_formatter = colorlog.ColoredFormatter(
+    fmt='%(log_color)s[%(asctime)s] %(levelname)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    log_colors=log_colors_config
+)
+
+console_handler.setFormatter(console_formatter)
+
+logger.addHandler(console_handler)
 
 from .kmer_encoding import (
     load_reads,
-    build_kmer_index,
-    build_feature_matrix,
-    encode_reads,
+    build_sparse_matrix_multiprocess,
 )
 from .dim_reduction import (
     SpectralEmbedding,
@@ -36,7 +55,6 @@ from .nearest_neighbors import(
     ExactNearestNeighbors,
     NNDescent,
     HNSW,
-    WeightedLowHash,
     ProductQuantization,
     SimHash,
 )
@@ -82,6 +100,10 @@ def parse_command_line_arguments():
         "--kmer-min-multiplicity", type=int, required=False, default=2, 
         help="Minimal value for k-mer's frequency using as a feature."
         )
+    mode1_parser.add_argument(
+        "--threads", type=int, required=False, default=10, 
+        help="Threads number used for reads encoding."
+        )
     
     mode2_parser = subparsers.add_parser("qvt", help="Finding Neighbors of query sequences in target sequences.",
                                          formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -90,11 +112,16 @@ def parse_command_line_arguments():
         required=True, help="Path to encode directory.")
     mode2_parser.add_argument(
         "-o","--output-file", type=str, 
-        required=True, help="Path to neighbor information output."
+        default="neighbor_info.tsv", help="Path to neighbor information output."
     )
     mode2_parser.add_argument(
+        "--threads", type=int,  required=False, 
+        default="64",
+        help="Threads number used for finding neighbors.",
+        )
+    mode2_parser.add_argument(
         "-d","--dimension-reduction-method", type=str,  required=False, 
-        default="GaussianRP",
+        default="SparseRP",
         help="Dimension reduction method you want to implement to matrix.(GaussianRP/SparseRP/scBiMap/Spectural/PCA/UMAP/None)",
         )
     mode2_parser.add_argument(
@@ -110,8 +137,8 @@ def parse_command_line_arguments():
     
     mode2_parser.add_argument(
         "--knn-method", type=str,  required=False, 
-        default='HNSW',
-        help="KNN method you want to find neighbots.(ExactNearestNeighbors/NNDescent/HNSW/MinHash/PQ/SimHash)",
+        default='NNDescent',
+        help="KNN method you want to find neighbots.(ExactNearestNeighbors/NNDescent/HNSW/PQ/SimHash)",
         )
     mode2_parser.add_argument(
         "--n-neighbors", type=int,  required=False, 
@@ -123,7 +150,11 @@ def parse_command_line_arguments():
         default=None,
         help="Path to the JSON configuration file for specifying knn parameters.",
         )
-
+    mode2_parser.add_argument(
+        "--matrix-type", type=str,  required=False, 
+        default="sparse",
+        help="Matrix type of matrix in input directory.(sparse/dense)",
+        )
     # 解析参数
     args = parser.parse_args()
     return(args)
@@ -141,7 +172,6 @@ knn_str2func = {
     'ExactNearestNeighbors':ExactNearestNeighbors,
     'NNDescent':NNDescent,
     'HNSW':HNSW,
-    'MinHash':WeightedLowHash,
     'PQ':ProductQuantization,
     'SimHash':SimHash,
     } 
@@ -176,36 +206,42 @@ def encode_qvt(args) -> Tuple[List[str],List[str],np.ndarray,np.ndarray]:
     logger.info(f"Loading input target FASTA file: {args.target}")
     fread_names, fread_orientations, fread_sequences = load_reads(args.target)
 
-    logger.info(f"Sampling k-mer and building kmer index.")
-    kmer_indices = build_kmer_index(
-            read_sequences=fread_sequences,
-            k=args.kmer_size,
-            sample_fraction=args.kmer_sample_fraction,
-            min_multiplicity=args.kmer_min_multiplicity,
-            seed=args.kmer_sample_seed) 
     logger.info(f"Loading input query FASTA file: {args.query}")
     qread_names, qread_orientations, qread_sequences = load_reads(args.query)
 
     logger.info("Building feature matrix for target sequences and query sequences.")
-    tar_feature_matrix = build_feature_matrix(read_sequences=fread_sequences,kmer_indices=kmer_indices,k=args.kmer_size)
-    que_feature_matrix = build_feature_matrix(read_sequences=qread_sequences,kmer_indices=kmer_indices,k=args.kmer_size)
+    tar_feature_matrix = build_sparse_matrix_multiprocess(
+        read_sequences=fread_sequences,
+        k=args.kmer_size,
+        seed=args.kmer_sample_seed,
+        sample_fraction=args.kmer_sample_fraction,
+        min_multiplicity=args.kmer_min_multiplicity,
+        n_processes=args.threads
+        )
+    que_feature_matrix = build_sparse_matrix_multiprocess(
+        read_sequences=qread_sequences,
+        k=args.kmer_size,
+        seed=args.kmer_sample_seed,
+        sample_fraction=args.kmer_sample_fraction,
+        min_multiplicity=args.kmer_min_multiplicity,
+        n_processes=args.threads
+    )
     logger.info(f"Target feature matrix size: {tar_feature_matrix.shape}, query feature matrix size: {que_feature_matrix.shape}.")
     return qread_names,fread_names,tar_feature_matrix,que_feature_matrix
 
 def encode_ava(args) -> Tuple[List[str],np.ndarray]:
     logger.info(f"Loading input target FASTA file: {args.target}")
     fread_names, fread_orientations, fread_sequences = load_reads(args.target)
-
-    logger.info(f"Sampling k-mer and building kmer index.")
-    kmer_indices = build_kmer_index(
-            read_sequences=fread_sequences,
-            k=args.kmer_size,
-            sample_fraction=args.kmer_sample_fraction,
-            min_multiplicity=args.kmer_min_multiplicity,
-            seed=args.kmer_sample_seed) 
-
+    
     logger.info("Building feature matrix for sequences.")
-    tar_feature_matrix = build_feature_matrix(read_sequences=fread_sequences,kmer_indices=kmer_indices,k=args.kmer_size)
+    tar_feature_matrix =  build_sparse_matrix_multiprocess(
+        read_sequences=fread_sequences,
+        k=args.kmer_size,
+        seed=args.kmer_sample_seed,
+        sample_fraction=args.kmer_sample_fraction,
+        min_multiplicity=args.kmer_min_multiplicity,
+        n_processes=args.threads
+    )
     logger.info(f"Feature matrix size: {tar_feature_matrix.shape}")
     return fread_names,tar_feature_matrix
 
@@ -231,7 +267,7 @@ def tfidf_qvt(
         tar_train = tar_feature_matrix
         que_fit = que_feature_matrix
     else:
-        raise ValueError(f"Invalid preprocess method: {preprocess_type}. Expected one of TF/IDF/TF-IDF/None.")
+        logger.error(f"Invalid preprocess method: {preprocess_type}. Expected one of TF/IDF/TF-IDF/None.")
     return tar_train,que_fit
 
 def tfidf_ava(feature_matrix: np.ndarray,
@@ -247,7 +283,7 @@ def tfidf_ava(feature_matrix: np.ndarray,
     elif preprocess_type == 'TF':
         pre_feature_matrix = feature_matrix
     else:
-        raise ValueError(f"Invalid preprocess method: {preprocess_type}. Expected one of TF/IDF/TF-IDF/None.")
+        logger.error(f"Invalid preprocess method: {preprocess_type}. Expected one of TF/IDF/TF-IDF/None.")
     return pre_feature_matrix
 
 
@@ -255,11 +291,17 @@ def dimension_reduction_qvt(args) ->Tuple[np.ndarray,np.ndarray]:
     dim = args.dimension_reduction_method
     target_fm_file = args.encode_dir + 'target_feature_matrix.npz'
     query_fm_file = args.encode_dir + 'query_feature_matrix.npz'
-    query_fm = sp.sparse.load_npz(query_fm_file)
-    taget_fm = sp.sparse.load_npz(target_fm_file)
-    
+    if args.matrix_type == 'sparse':
+        query_fm = sp.sparse.load_npz(query_fm_file)
+        taget_fm = sp.sparse.load_npz(target_fm_file)
+    elif args.matrix_type == 'dense':
+        query_fm = np.load(query_fm_file)['arr_0']
+        taget_fm = np.load(target_fm_file)['arr_0']
+    else:
+        logger.error(f"Invalid matrix type: {args.matrix_type}. Expected one of sparse/dense.")
+
     if (query_fm.shape[1] > 2**32 or taget_fm.shape[1]> 2**32) and dim in ['scBiMap','PCA','Spectural']:
-        logger.warning(f"Errors may occur using {dim} method on this large feature matrix. Consider using one of the following methods: GaussianRP, SparseRP, or UMAP.")
+        logger.error(f"Errors may occur using {dim} method on this large feature matrix. Consider using one of the following methods: GaussianRP, SparseRP or UMAP.")
     
     dimension_reduction_kw  = get_kw(args,'dimension_reduction')
     if dim == 'None':
@@ -267,7 +309,7 @@ def dimension_reduction_qvt(args) ->Tuple[np.ndarray,np.ndarray]:
         taget_fm_dim = taget_fm
         query_fm_dim = query_fm
     elif dim not in dim_str2func.keys():
-        raise KeyError(f"Invalid dimension reduction method: {dim}. Expected one of {list(dim_str2func.keys())}.")
+        logger.error(f"Invalid dimension reduction method: {dim}. Expected one of {list(dim_str2func.keys())}.")
     else:
         dimension_reduction_method = dim_str2func[dim]
         logger.info(f"Performing dimensionality reduction to {dim} dimensions.")
@@ -294,7 +336,7 @@ def dimension_reduction_ava(args) ->np.ndarray:
         logger.info("Dimensionality reduction is explicitly disabled.")
         taget_fm_dim = taget_fm
     elif dim not in dim_str2func.keys():
-        raise KeyError(f"Invalid dimension reduction method: {dim}. Expected one of {list(dim_str2func.keys())}.")
+        logger.error(f"Invalid dimension reduction method: {dim}. Expected one of {list(dim_str2func.keys())}.")
     else:
         dimension_reduction_method = dim_str2func[dim]
         logger.info(f"Performing dimensionality reduction to {dim} dimensions.")
@@ -315,7 +357,7 @@ def get_neighbor(
     logger.info(f"Using {knn_method} method to find nearest neighbors.")
     nearest_neighbors_method = knn_str2func[knn_method]
     neighbor_indices,distance  = nearest_neighbors_method().get_neighbors(
-    taget_fm_dim,query_fm_dim, n_neighbors=args.n_neighbors, **nearest_neighbors_kw
+    taget_fm_dim,query_fm_dim, n_neighbors=args.n_neighbors + 1, threads = args.threads, **nearest_neighbors_kw
     )
     return neighbor_indices,distance
 
@@ -324,20 +366,20 @@ def main():
     args = parse_command_line_arguments()
     encode_dir = abspath(args.encode_dir) if args.mode == "qvt" else abspath(args.output_dir)
     fm_file = encode_dir + '/feature_matrix.npz'
-    name_file = encode_dir + '/read_name.txt'
+    name_file = encode_dir + '/read_name.pkl'
     target_fm_file = encode_dir + '/target_feature_matrix.npz'
     query_fm_file = encode_dir + '/query_feature_matrix.npz'
-    qname_file = encode_dir + '/query_name.txt'
-    fname_file = encode_dir + '/target_name.txt'
+    qname_file = encode_dir + '/query_name.pkl'
+    fname_file = encode_dir + '/target_name.pkl'
 
     if args.mode == "encode":
         output_dir = abspath(args.output_dir)
         fm_file = output_dir + '/feature_matrix.npz'
-        name_file = output_dir + '/read_name.txt'
+        name_file = output_dir + '/read_name.pkl'
         target_fm_file = output_dir + '/target_feature_matrix.npz'
         query_fm_file = output_dir + '/query_feature_matrix.npz'
-        qname_file = output_dir + '/query_name.txt'
-        fname_file = output_dir + '/target_name.txt'
+        qname_file = output_dir + '/query_name.pkl'
+        fname_file = output_dir + '/target_name.pkl'
 
         os.makedirs(output_dir, exist_ok=True)
         if args.target == args.query:
@@ -357,6 +399,8 @@ def main():
                 pickle.dump(fread_names, file2)
             sp.sparse.save_npz(target_fm_file, tar_train)
             sp.sparse.save_npz(query_fm_file, que_fit)
+
+        logger.info(f"SeqNeighbor encoding is complete!")
 
     elif args.mode == "qvt":
         ## remind unsuitable combination of dimensional-reduction method and knn method
@@ -388,7 +432,6 @@ def main():
         else:
             missing_files = ava_missing_files + qvt_missing_files
             logger.error(f"{missing_files} file missing.")
-            raise ValueError(f"{missing_files} file missing.")
         df.to_csv(args.output_file,sep='\t')
     else:
         print("No mode selected. Use 'encode' or 'qvt'.")

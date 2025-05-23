@@ -20,3 +20,5 @@ ipykernel
 scipy
 isal
 pynear
+colorlog
+xxhash
