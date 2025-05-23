@@ -1,0 +1,30 @@
+name: seqneighbor_env
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - biopython
+  - matplotlib
+  - numpy==1.26.4
+  - pandas
+  - requests
+  - hnswlib==0.7.0
+  - nbconvert
+  - notebook
+  - pynndescent==0.5.12
+  - scanpy==1.10.1
+  - scikit-learn==1.5.0
+  - pysam==0.22.1
+  - mmh3
+  - faiss-cpu
+  - memory_profiler==0.61.0
+  - pygraphviz
+  - nltk
+  - networkx
+  - ipykernel
+  - scipy
+  - isal
+  - pynear
+  - colorlog
+  - xxhash
