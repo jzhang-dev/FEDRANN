@@ -11,7 +11,12 @@ import scipy.sparse as sp
 import numpy as np
 import pandas as pd
 from isal import igzip
-
+from .fasta_load import FastaLoader
+import time 
+import xxhash
+from multiprocessing import Pool
+from functools import partial
+import gc
 
 def init_reverse_complement():
     TRANSLATION_TABLE = str.maketrans("ACTGactg", "TGACtgac")
@@ -45,75 +50,82 @@ def load_reads(fasta_path: str):
     read_sequences = []
     read_names = []
     read_orientations = []
-    
-    with open_(fasta_path,'rt') as handle:
-        for record in SeqIO.parse(handle, "fasta"):
-            seq = str(record.seq)
-            read_sequences.append(seq)
-            read_names.append(record.id)
-            read_orientations.append("+")
+    loader = FastaLoader(file_path=fasta_path)
+    for record in loader:  # 迭代获取每条序列
+        seq = str(record.sequence)
+        read_sequences.append(seq)
+        read_names.append(record.name)
+        read_orientations.append("+")
 
-            # Include reverse complement
-            read_sequences.append(reverse_complement(seq))
-            read_names.append(record.id)
-            read_orientations.append("-")
+        # Include reverse complement
+        read_sequences.append(reverse_complement(seq))
+        read_names.append(record.name)
+        read_orientations.append("-")
 
     return read_names, read_orientations, read_sequences
 
 
-def build_kmer_index(
-    read_sequences: Sequence[str],
-    k: int,
-    *,
-    sample_fraction: float,
-    min_multiplicity: int,
-    seed: int,
-) -> Mapping[str, int]:
-    kmer_counter = collections.Counter()
-    for seq in read_sequences:
-        for p in range(len(seq) - k + 1):
-            kmer = seq[p : p + k]
-            kmer_counter[kmer] += 1
-    rng = np.random.default_rng(seed=seed)
-    vocabulary = set(
-        x
-        for x, count in kmer_counter.items()
-        if count >= min_multiplicity and rng.random() <= sample_fraction
+def process_sequence(args, k, seed, max_hash):
+    row_idx, seq = args
+    seq_counts = collections.defaultdict(int)
+    kmers = (seq[p:p+k] for p in range(len(seq) - k + 1))
+    # Count kmers in this sequence
+    for kmer in kmers:
+        hashed = xxhash.xxh3_64(kmer, seed=seed).intdigest()
+        if hashed <= max_hash:
+            seq_counts[hashed] += 1
+    if row_idx % 200_000 == 0:
+        print(row_idx)
+
+    count = len(seq_counts)
+    if count == 0:
+        return np.empty((0, 3), dtype=np.uint64)
+    result = np.empty((count, 3), dtype=np.uint64)
+    for i, (hashed, cnt) in enumerate(seq_counts.items()):
+        result[i] = [row_idx, hashed, cnt]
+    return result
+
+def build_sparse_matrix_multiprocess(read_sequences, k, seed, sample_fraction, min_multiplicity, n_processes):
+    all_kmer_number = 2**64
+    max_hash = all_kmer_number * sample_fraction
+    # Parallel processing with imap
+    with Pool(n_processes,maxtasksperchild=100) as pool:
+        func = partial(process_sequence, 
+                      k=k, seed=seed, 
+                      max_hash=max_hash)
+        
+        # Process results incrementally
+        row_ind, col_ind, data = [], [], []
+        for result in pool.imap(func, enumerate(read_sequences), chunksize=1000):
+            if result.size > 0:
+                row_ind.append(result[:, 0])
+                col_ind.append(result[:, 1])
+                data.append(result[:, 2])
+        pool.close()
+        pool.join()
+        gc.collect()
+
+        # Concatenate all results
+    row_ind = np.concatenate(row_ind)
+    col_ind = np.concatenate(col_ind)
+    data = np.concatenate(data)
+
+    # Build sparse matrix
+    re_col_ind = pd.factorize(col_ind)[0].tolist()
+    n_rows = len(read_sequences)
+    n_cols = max(re_col_ind) + 1
+
+    _feature_matrix = sp.csr_matrix(
+        (data, (row_ind, re_col_ind)),
+        shape=(n_rows, n_cols),
+        dtype=np.int32
     )
-    vocabulary |= set(reverse_complement(x) for x in vocabulary)
-    kmer_indices = {kmer: i for i, kmer in enumerate(vocabulary)}
-    return kmer_indices
 
-
-def build_feature_matrix(
-    read_sequences: Sequence[str],
-    kmer_indices: Mapping[str, int],
-    k: int,
-) -> tuple[sp.csr_matrix, Sequence[Sequence[int]]]:
-    row_ind, col_ind, data = [], [], []
-    read_features = []
-    for i, seq in enumerate(read_sequences):
-        features_i = []
-        for p in range(len(seq) - k + 1):
-            kmer = seq[p : p + k]
-            j = kmer_indices.get(kmer)
-            if j is None:
-                continue
-            features_i.append(j)
-
-        read_features.append(features_i)
-
-        kmer_counts = collections.Counter(features_i)
-        for j, count in kmer_counts.items():
-            row_ind.append(i)
-            col_ind.append(j)
-            data.append(count)
-
-    feature_matrix = sp.csr_matrix(
-        (data, (row_ind, col_ind)), shape=(len(read_sequences), len(kmer_indices))
-    )
+    # Filter by multiplicity
+    col_sums = _feature_matrix.sum(axis=0).A1
+    mask = col_sums >= min_multiplicity
+    feature_matrix = _feature_matrix[:, mask]
     return feature_matrix
-
 
 def encode_reads(
     fasta_path: str,
@@ -134,22 +146,13 @@ def encode_reads(
     # Load reads
     read_names, read_orientations, read_sequences = load_reads(fasta_path=fasta_path)
 
-    # Build vocabulary
-    kmer_indices = build_kmer_index(
+    feature_matrix = build_sparse_matrix_multiprocess(
         read_sequences=read_sequences,
         k=k,
+        seed=seed,
         sample_fraction=sample_fraction,
         min_multiplicity=min_multiplicity,
-        seed=seed,
-        processes=processes,
-    )
-
-    # Build matrix
-    feature_matrix, read_features = build_feature_matrix(
-        read_sequences=read_sequences,
-        kmer_indices=kmer_indices,
-        k=k,
-        processes=processes,
+        n_processes=processes
     )
 
     # Build metadata
@@ -176,4 +179,4 @@ def encode_reads(
         )
     metadata = pd.DataFrame(rows)
 
-    return feature_matrix, read_features, metadata
+    return feature_matrix, metadata
