@@ -65,7 +65,7 @@ def load_reads(fasta_path: str):
     return read_names, read_orientations, read_sequences
 
 
-def process_sequence(args, k, seed, max_hash):
+def process_sequence(args, k, seed, max_hash,preset_col_ind):
     row_idx, seq = args
     seq_counts = collections.defaultdict(int)
     kmers = (seq[p:p+k] for p in range(len(seq) - k + 1))
@@ -73,10 +73,14 @@ def process_sequence(args, k, seed, max_hash):
     for kmer in kmers:
         hashed = xxhash.xxh3_64(kmer, seed=seed).intdigest()
         if hashed <= max_hash:
-            seq_counts[hashed] += 1
-    if row_idx % 200_000 == 0:
-        print(row_idx)
-
+            if preset_col_ind == []:
+                seq_counts[hashed] += 1
+            else:
+                if hashed in preset_col_ind:
+                    seq_counts[hashed] += 1
+    # if row_idx % 200_000 == 0:
+    #     print(row_idx)
+    ## print process schedule
     count = len(seq_counts)
     if count == 0:
         return np.empty((0, 3), dtype=np.uint64)
@@ -85,14 +89,15 @@ def process_sequence(args, k, seed, max_hash):
         result[i] = [row_idx, hashed, cnt]
     return result
 
-def build_sparse_matrix_multiprocess(read_sequences, k, seed, sample_fraction, min_multiplicity, n_processes):
+def build_sparse_matrix_multiprocess(read_sequences, k, seed, sample_fraction, min_multiplicity, n_processes, preset_col_ind = []):
     all_kmer_number = 2**64
     max_hash = all_kmer_number * sample_fraction
     # Parallel processing with imap
     with Pool(n_processes,maxtasksperchild=100) as pool:
         func = partial(process_sequence, 
                       k=k, seed=seed, 
-                      max_hash=max_hash)
+                      max_hash=max_hash,
+                      preset_col_ind=preset_col_ind)
         
         # Process results incrementally
         row_ind, col_ind, data = [], [], []
@@ -125,7 +130,7 @@ def build_sparse_matrix_multiprocess(read_sequences, k, seed, sample_fraction, m
     col_sums = _feature_matrix.sum(axis=0).A1
     mask = col_sums >= min_multiplicity
     feature_matrix = _feature_matrix[:, mask]
-    return feature_matrix
+    return feature_matrix,set(col_ind)
 
 def encode_reads(
     fasta_path: str,
