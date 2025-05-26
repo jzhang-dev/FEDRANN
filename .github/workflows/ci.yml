@@ -46,7 +46,6 @@ jobs:
             -n 500 \
             --knn-method NNDescent \
             -o test/output/KNN \
-            -p IDF \
             --n-neighbors 20 
 
 
