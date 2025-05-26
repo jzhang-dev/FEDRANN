@@ -26,6 +26,30 @@ from . import __version__, __description__
 import logging
 import colorlog
 
+from .kmer_encoding import (
+    load_reads,
+    build_sparse_matrix_multiprocess,
+)
+from .preprocess import manual_tf, manual_idf
+from .dim_reduction import (
+    SpectralEmbedding,
+    PCA,
+    UMAPEmbedding,
+    GaussianRandomProjection,
+    SparseRandomProjection,
+    mp_SparseRandomProjection,
+    scBiMapEmbedding,
+)
+from .nearest_neighbors import (
+    ExactNearestNeighbors,
+    NNDescent,
+    HNSW,
+    ProductQuantization,
+    SimHash,
+)
+from .format_output import format_output
+
+
 log_colors_config = {
     "DEBUG": "cyan",
     "INFO": "green",
@@ -50,27 +74,6 @@ console_handler.setFormatter(console_formatter)
 
 logger.addHandler(console_handler)
 
-from .kmer_encoding import (
-    load_reads,
-    build_sparse_matrix_multiprocess,
-)
-from .preprocess import manual_tf, manual_idf
-from .dim_reduction import (
-    SpectralEmbedding,
-    PCA,
-    UMAPEmbedding,
-    GaussianRandomProjection,
-    SparseRandomProjection,
-    scBiMapEmbedding,
-)
-from .nearest_neighbors import (
-    ExactNearestNeighbors,
-    NNDescent,
-    HNSW,
-    ProductQuantization,
-    SimHash,
-)
-from .format_output import format_output
 
 
 def parse_command_line_arguments():
@@ -229,7 +232,7 @@ def parse_command_line_arguments():
 
 dim_str2func = {
     "GaussianRP": GaussianRandomProjection,
-    "SparseRP": SparseRandomProjection,
+    "SparseRP": mp_SparseRandomProjection,
     "scBiMap": scBiMapEmbedding,
     "Spectural": SpectralEmbedding,
     "PCA": PCA,
