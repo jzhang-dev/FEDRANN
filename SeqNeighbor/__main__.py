@@ -144,7 +144,7 @@ def parse_command_line_arguments():
         "--threads",
         type=int,
         required=False,
-        default=10,
+        default=1,
         help="Threads numbers used for reads encoding.",
     )
 
@@ -167,7 +167,7 @@ def parse_command_line_arguments():
         "--threads",
         type=int,
         required=False,
-        default="64",
+        default="1",
         help="Threads numbers used for finding neighbors.",
     )
     mode2_parser.add_argument(
