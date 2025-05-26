@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import math
 import scipy as sp
 import numpy as np
 from numpy.typing import NDArray
@@ -9,10 +10,10 @@ import anndata
 import sklearn
 from sklearn.decomposition import TruncatedSVD
 from sklearn import random_projection
-from sklearn.manifold import Isomap  
+from sklearn.manifold import Isomap
 import umap
 from sklearn.decomposition import PCA
-
+from sklearn.utils import safe_sparse_dot
 
 
 class _SpectralMatrixFree:
@@ -85,52 +86,107 @@ class SpectralEmbedding(_DimensionReduction):
         reducer.fit(data)
         _, embedding = reducer.transform(weighted_by_sd=weighted_by_sd)
         return embedding
-    
+
+
 class TruncatedSVD(_DimensionReduction):
-    def transform(
-        self, data, n_dimensions: int):
+    def transform(self, data, n_dimensions: int):
         reducer = TruncatedSVD(n_components=n_dimensions)
         embedding = reducer.fit(data)
         return embedding
-    
+
+
 class PCA(_DimensionReduction):
-    def transform(
-        self, data, n_dimensions: int):
-        pca = sklearn.decomposition.PCA(n_components=n_dimensions) 
-        dim_redu = pca.fit_transform(data)  
+    def transform(self, data, n_dimensions: int):
+        pca = sklearn.decomposition.PCA(n_components=n_dimensions)
+        dim_redu = pca.fit_transform(data)
         return dim_redu
+
 
 class isomap(_DimensionReduction):
-    def transform(self,data,n_dimensions):
-        isomap = Isomap(n_components=n_dimensions)  
-        dim_redu = isomap.fit_transform(data) 
+    def transform(self, data, n_dimensions):
+        isomap = Isomap(n_components=n_dimensions)
+        dim_redu = isomap.fit_transform(data)
         return dim_redu
 
-class UMAPEmbedding():
-    def transform(
-        self, data, n_dimensions: int):
+
+class UMAPEmbedding:
+    def transform(self, data, n_dimensions: int):
         umap_model = umap.umap_.UMAP(n_components=n_dimensions)
         embedding = umap_model.fit_transform(data)
         return embedding
 
+
 class GaussianRandomProjection(_DimensionReduction):
-    def transform(
-        self, data, n_dimensions: int):
+    def transform(self, data, n_dimensions: int):
         reducer = random_projection.GaussianRandomProjection(n_components=n_dimensions)
         embedding = reducer.fit_transform(data)
         return embedding
 
+
 class SparseRandomProjection(_DimensionReduction):
-    def transform(
-        self, data, n_dimensions: int):
+    def transform(self, data, n_dimensions: int):
         reducer = random_projection.SparseRandomProjection(n_components=n_dimensions)
         embedding = reducer.fit_transform(data)
         return embedding
 
+
+class mp_SparseRandomProjection:
+    def _make_random_matrix(
+        self, n_components, n_features, density: float, seed: int = 2094
+    ):
+        rng = np.random.default_rng(seed)
+        indices = []
+        offset = 0
+        indptr = [offset]
+        for _ in range(n_components):
+            # find the indices of the non-zero components for row i
+            n_nonzero_i = rng.binomial(n_features, density)
+            indices_i = rng.choice(n_features, n_nonzero_i, replace=False)
+            indices.append(indices_i)
+            offset += n_nonzero_i
+            indptr.append(offset)
+
+        indices = np.concatenate(indices)
+
+        # Among non zero components the probability of the sign is 50%/50%
+        data = rng.binomial(1, 0.5, size=np.size(indices)) * 2 - 1
+
+        # build the CSR structure by concatenating the rows
+        components = sp.csr_matrix(
+            (data, indices, indptr), shape=(n_components, n_features)
+        )
+        return np.sqrt(1 / density) / np.sqrt(n_components) * components
+
+    def transform(
+        self,
+        data: csr_matrix | NDArray,
+        n_dimensions: int,
+        density: float | str = "auto",
+        batch_size: int = 10000,
+        seed: int = 521022,
+        threads: int = 1,
+    ) -> np.ndarray:
+        if density == "auto":
+            _density = 1 / math.sqrt(data.shape[1])
+        else:
+            assert isinstance(density, float) and 0 < density <= 1
+            _density = density
+
+        random_matrix = self._make_random_matrix(
+            n_components=n_dimensions,
+            n_features=data.shape[1],
+            density=_density,
+            seed=seed,
+        )
+
+        embeddings = safe_sparse_dot(data, random_matrix.T, dense_output=True)
+        return embeddings
+
+
 class SimHash_Dimredu(_DimensionReduction):
     @staticmethod
     def _get_hash_table(
-        feature_count: int, n_dimensions:int, seed: int
+        feature_count: int, n_dimensions: int, seed: int
     ) -> NDArray[np.int8]:
         assert n_dimensions % 8 == 0, "Error: n_dimensions must be divisible by 8."
 
@@ -140,11 +196,12 @@ class SimHash_Dimredu(_DimensionReduction):
         )
         hash_table = hash_table * 2 - 1
         return hash_table
-    
-    def transform(self, data, n_dimensions = 3200 ,seed = 20141025):
-        hash_table = self._get_hash_table(data.shape[1],n_dimensions,seed)
-        simhash = (data @ hash_table).astype(np.uint8) 
+
+    def transform(self, data, n_dimensions=3200, seed=20141025):
+        hash_table = self._get_hash_table(data.shape[1], n_dimensions, seed)
+        simhash = (data @ hash_table).astype(np.uint8)
         return simhash
+
 
 class scBiMapEmbedding(_DimensionReduction):
     """
@@ -157,19 +214,19 @@ class scBiMapEmbedding(_DimensionReduction):
         data,
         n_dimensions: int,
         *,
-        normalize=True, 
+        normalize=True,
     ) -> NDArray:
         if data.min() < 0:
             raise ValueError(
                 "The input matrix is regarded as a similarity matrix and thus should not contain negtive values"
             )
-        eps=0.0000000001,
+        eps = (0.0000000001,)
         Dx = sparse.diags(np.ravel(1 / (data.sum(axis=1) + eps)))
 
         y = (Dx @ csr_matrix(data.sum(axis=1))).T  # row vector
         Dy = sparse.diags(np.ravel((1 / (np.sqrt((y @ data).T.toarray()) + eps))))  # type: ignore
         C = np.sqrt(Dx) @ data @ Dy  # type: ignore
-        _, _, evec = sparse.linalg.svds( # type: ignore
+        _, _, evec = sparse.linalg.svds(  # type: ignore
             C, k=n_dimensions, return_singular_vectors="vh", random_state=0
         )
         V = Dy @ evec.T  # eigenvectors for features
