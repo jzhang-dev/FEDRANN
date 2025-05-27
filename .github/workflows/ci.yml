@@ -22,12 +22,12 @@ jobs:
     - name: Test help message
       shell: bash -l {0}
       run: |
-        SeqNeighbor --help
+        ./entrypoint.sh --help
 
     - name: Test feature extraction
       shell: bash -l {0}
       run: |
-        SeqNeighbor encode\
+        ./entrypoint.sh encode\
             -q test/data/reads.fasta.gz \
             -t test/data/reads.fasta.gz \
             -o test/output/feature_extraction \
@@ -40,7 +40,7 @@ jobs:
     - name: Test kNN
       shell: bash -l {0}
       run: |
-        SeqNeighbor qvt \
+        ./entrypoint.sh qvt \
             -i test/output/feature_extraction \
             -d SparseRP \
             -n 500 \

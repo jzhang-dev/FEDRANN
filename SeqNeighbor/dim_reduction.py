@@ -10,7 +10,6 @@ from sklearn.preprocessing import normalize as normalize_function
 import sklearn
 from sklearn import random_projection
 from sklearn.manifold import Isomap
-import umap
 from sklearn.decomposition import PCA as sklearn_PCA
 from sklearn.utils.extmath import safe_sparse_dot
 import sharedmem
@@ -102,12 +101,6 @@ class isomap(_DimensionReduction):
         dim_redu = isomap.fit_transform(data)
         return dim_redu
 
-
-class UMAPEmbedding:
-    def transform(self, data, n_dimensions: int):
-        umap_model = umap.umap_.UMAP(n_components=n_dimensions)
-        embedding = umap_model.fit_transform(data)
-        return embedding
 
 
 class GaussianRandomProjection(_DimensionReduction):

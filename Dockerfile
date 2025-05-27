@@ -21,15 +21,13 @@ RUN python3 -m venv /opt/venv \
 # 后续所有命令都用虚拟环境
 ENV PATH="/opt/venv/bin:$PATH"
 
+# 创建工作目录
+WORKDIR /workdir
 
 # 安装 SeqNeighbor
 COPY . .
 RUN pip install --no-cache-dir .
 
 
-# 创建工作目录
-WORKDIR /workdir
-
-
 # 设置默认命令
-ENTRYPOINT [ "SeqNeighbor" ]
+ENTRYPOINT [ "/workdir/entrypoint.sh" ]
