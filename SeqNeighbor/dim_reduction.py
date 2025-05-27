@@ -13,6 +13,7 @@ from sklearn.manifold import Isomap
 import umap
 from sklearn.decomposition import PCA as sklearn_PCA
 from sklearn.utils.extmath import safe_sparse_dot
+import sharedmem
 
 
 class _SpectralMatrixFree:
@@ -173,7 +174,20 @@ class mp_SparseRandomProjection:
             seed=seed,
         )
 
-        embeddings = safe_sparse_dot(data, random_matrix.T, dense_output=True)
+        with sharedmem.MapReduce(np=threads) as pool:
+            def work(i0):
+                batch_data = data[i0 : i0 + batch_size]
+                batch_embeddings = safe_sparse_dot(batch_data, random_matrix.T, dense_output=True)
+                return i0, batch_embeddings
+            
+            embeddings = np.zeros(
+                (data.shape[0], n_dimensions), dtype=random_matrix.dtype
+            )
+            def reduce(i0, batch_embeddings):
+                embeddings[i0 : i0 + batch_size] = batch_embeddings
+
+            pool.map(work, range(0, data.shape[0], batch_size), reduce=reduce)
+
         assert isinstance(embeddings, np.ndarray)
         return embeddings
 
