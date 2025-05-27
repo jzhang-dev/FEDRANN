@@ -14,9 +14,6 @@ import os
 from os.path import join
 from math import floor, ceil
 from os.path import abspath, join, splitext
-import subprocess
-import pkg_resources
-import time
 import scipy as sp
 import json, pickle
 from sklearn.feature_extraction.text import TfidfTransformer
