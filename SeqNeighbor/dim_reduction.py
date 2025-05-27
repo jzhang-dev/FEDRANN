@@ -140,7 +140,7 @@ class mp_SparseRandomProjection:
 
         # build the CSR structure by concatenating the rows
         components = csr_matrix(
-            (data, indices, indptr), shape=(n_components, n_features)
+            (data, indices, indptr), shape=(n_components, n_features), dtype=np.float32
         )
         return np.sqrt(1 / density) / np.sqrt(n_components) * components
 
@@ -168,18 +168,17 @@ class mp_SparseRandomProjection:
         )
 
         with sharedmem.MapReduce(np=threads) as pool:
+            embeddings = sharedmem.empty(
+                (data.shape[0], n_dimensions), dtype=random_matrix.dtype
+            )
             def work(i0):
                 batch_data = data[i0 : i0 + batch_size]
                 batch_embeddings = safe_sparse_dot(batch_data, random_matrix.T, dense_output=True)
-                return i0, batch_embeddings
-            
-            embeddings = np.zeros(
-                (data.shape[0], n_dimensions), dtype=random_matrix.dtype
-            )
-            def reduce(i0, batch_embeddings):
                 embeddings[i0 : i0 + batch_size] = batch_embeddings
 
-            pool.map(work, range(0, data.shape[0], batch_size), reduce=reduce)
+                return i0
+
+            pool.map(work, range(0, data.shape[0], batch_size))
 
         assert isinstance(embeddings, np.ndarray)
         return embeddings
