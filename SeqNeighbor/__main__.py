@@ -31,7 +31,6 @@ from .preprocess import tf_transform, idf_transform
 from .dim_reduction import (
     SpectralEmbedding,
     PCA,
-    UMAPEmbedding,
     GaussianRandomProjection,
     SparseRandomProjection,
     mp_SparseRandomProjection,
@@ -232,7 +231,6 @@ dim_str2func = {
     "scBiMap": scBiMapEmbedding,
     "Spectural": SpectralEmbedding,
     "PCA": PCA,
-    "UMAP": UMAPEmbedding,
     "None": None,
 }
 knn_str2func = {
