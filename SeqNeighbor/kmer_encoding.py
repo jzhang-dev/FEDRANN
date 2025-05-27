@@ -1,17 +1,10 @@
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from snakemake_stub import *
-
-
 import gzip, json, collections
 from typing import Sequence, Mapping, Collection,Optional
 from Bio import SeqIO
 import scipy.sparse as sp
 import numpy as np
 import pandas as pd
-from isal import igzip
-from .fasta_load import FastaLoader
+from .fastx_io import FastqLoader
 import time 
 import xxhash
 from multiprocessing import Pool
@@ -36,21 +29,12 @@ def init_reverse_complement():
 
 reverse_complement = init_reverse_complement()
 
-def open_(path, mode="rt", gzipped: Optional[bool] = None, **kw):
-    if gzipped is None:
-        gzipped = path.endswith(".gz")
-    if gzipped:
-        open_ = igzip.open
-        return open_(path, mode)
-    else:
-        open_ = open
-    return open_(path, mode, **kw)
 
 def load_reads(fasta_path: str):
     read_sequences = []
     read_names = []
     read_orientations = []
-    loader = FastaLoader(file_path=fasta_path)
+    loader = FastqLoader(file_path=fasta_path)
     for record in loader:  # 迭代获取每条序列
         seq = str(record.sequence)
         read_sequences.append(seq)
