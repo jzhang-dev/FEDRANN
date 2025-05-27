@@ -13,7 +13,7 @@ from sklearn import random_projection
 from sklearn.manifold import Isomap
 import umap
 from sklearn.decomposition import PCA
-from sklearn.utils import safe_sparse_dot
+from sklearn.utils.extmath import safe_sparse_dot
 
 
 class _SpectralMatrixFree:
