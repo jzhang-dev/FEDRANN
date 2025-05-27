@@ -75,7 +75,6 @@ console_handler.setFormatter(console_formatter)
 logger.addHandler(console_handler)
 
 
-
 def parse_command_line_arguments():
     parser = argparse.ArgumentParser(
         description=__description__,
@@ -376,6 +375,12 @@ def dimension_reduction_qvt(args) -> Tuple[np.ndarray, np.ndarray]:
     if args.matrix_type == "sparse":
         query_fm = sp.sparse.load_npz(query_fm_file)
         taget_fm = sp.sparse.load_npz(target_fm_file)
+        assert isinstance(
+            query_fm, sp.sparse.csr_matrix
+        ), "Feature matrix must be a sparse matrix."
+        assert isinstance(
+            taget_fm, sp.sparse.csr_matrix
+        ), "Feature matrix must be a sparse matrix."
     elif args.matrix_type == "dense":
         query_fm = np.load(query_fm_file)["arr_0"]
         taget_fm = np.load(target_fm_file)["arr_0"]
@@ -426,6 +431,9 @@ def dimension_reduction_ava(args) -> np.ndarray:
     dim = args.dimension_reduction_method
     target_fm_file = join(args.encode_dir, "feature_matrix.npz")
     taget_fm = sp.sparse.load_npz(target_fm_file)
+    assert isinstance(
+        taget_fm, sp.sparse.csr_matrix
+    ), "Feature matrix must be a sparse matrix."
 
     if taget_fm.shape[1] > 2**32 and dim in ["scBiMap", "PCA", "Spectural"]:
         logger.warning(
@@ -500,6 +508,7 @@ def main():
             logger.info("Saving output to files.")
             with open(name_file, "wb") as file1:
                 pickle.dump(read_names, file1)
+            assert isinstance(pre_feature_matrix, sp.sparse.csr_matrix)
             sp.sparse.save_npz(fm_file, pre_feature_matrix)
         else:
             qread_names, fread_names, tar_feature_matrix, que_feature_matrix = (
@@ -513,7 +522,9 @@ def main():
                 pickle.dump(qread_names, file1)
             with open(fname_file, "wb") as file2:
                 pickle.dump(fread_names, file2)
-            sp.sparse.save_npz(target_fm_file, tar_train)
+            assert isinstance(target_fm_file, sp.sparse.csr_matrix)
+            assert isinstance(tar_train, sp.sparse.csr_matrix)
+            sp.sparse.save_npz(que_fit, tar_train)
             sp.sparse.save_npz(query_fm_file, que_fit)
 
         logger.info(f"SeqNeighbor encoding is complete!")
