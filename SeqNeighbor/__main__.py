@@ -27,7 +27,7 @@ from .kmer_encoding import (
     load_reads,
     build_sparse_matrix_multiprocess,
 )
-from .preprocess import manual_tf, manual_idf
+from .preprocess import tf_transform, idf_transform
 from .dim_reduction import (
     SpectralEmbedding,
     PCA,
@@ -322,12 +322,12 @@ def tfidf_qvt(
     if preprocess_type == "IDF":
         tar_feature_matrix[tar_feature_matrix > 0] = 1
         que_feature_matrix[que_feature_matrix > 0] = 1
-        tar_train, idf = manual_idf(tar_feature_matrix)
+        tar_train, idf = idf_transform(tar_feature_matrix)
         que_fit = que_feature_matrix.multiply(idf)
     elif preprocess_type == "TF-IDF":
-        tar_tf = manual_tf(tar_feature_matrix)
-        que_idf = manual_tf(que_feature_matrix)
-        tar_train, idf = manual_idf(tar_tf)
+        tar_tf = tf_transform(tar_feature_matrix)
+        que_idf = tf_transform(que_feature_matrix)
+        tar_train, idf = idf_transform(tar_tf)
         que_fit = que_idf.multiply(idf)
     elif preprocess_type == "None":
         tar_feature_matrix[tar_feature_matrix > 0] = 1
@@ -336,8 +336,8 @@ def tfidf_qvt(
         tar_train = tar_feature_matrix
         que_fit = que_feature_matrix
     elif preprocess_type == "TF":
-        tar_train = manual_tf(tar_feature_matrix)
-        que_fit = manual_tf(que_feature_matrix)
+        tar_train = tf_transform(tar_feature_matrix)
+        que_fit = tf_transform(que_feature_matrix)
     else:
         logger.error(
             f"Invalid preprocess method: {preprocess_type}. Expected one of TF/IDF/TF-IDF/None/count."
@@ -348,16 +348,16 @@ def tfidf_qvt(
 def tfidf_ava(feature_matrix: np.ndarray, preprocess_type: str) -> np.ndarray:
     if preprocess_type == "IDF":
         feature_matrix[feature_matrix > 0] = 1
-        pre_feature_matrix, _ = manual_idf(feature_matrix)
+        pre_feature_matrix, _ = idf_transform(feature_matrix)
     elif preprocess_type == "TF-IDF":
-        _feature_matrix = manual_tf(feature_matrix)
-        pre_feature_matrix, _ = manual_idf(_feature_matrix)
+        _feature_matrix = tf_transform(feature_matrix)
+        pre_feature_matrix, _ = idf_transform(_feature_matrix)
     elif preprocess_type == "None":
         feature_matrix[feature_matrix > 0] = 1
     elif preprocess_type == "count":
         pre_feature_matrix = feature_matrix
     elif preprocess_type == "TF":
-        pre_feature_matrix = manual_tf(feature_matrix)
+        pre_feature_matrix = tf_transform(feature_matrix)
     else:
         logger.error(
             f"Invalid preprocess method: {preprocess_type}. Expected one of TF/IDF/TF-IDF/None/count."
