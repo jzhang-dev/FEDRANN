@@ -6,7 +6,6 @@ ipykernel
 isal
 matplotlib
 memory_profiler == 0.61.0
-mmh3
 networkx
 nltk
 numpy == 1.26.4
