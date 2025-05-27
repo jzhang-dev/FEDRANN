@@ -26,7 +26,6 @@ from dataclasses import dataclass, field
 from isal import igzip
 import numpy as np
 from numpy.typing import NDArray
-import pandas as pd
 
 # from .custom_logging import logger
 
