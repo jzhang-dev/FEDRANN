@@ -504,12 +504,12 @@ def main():
         os.makedirs(output_dir, exist_ok=True)
         if args.target == args.query:
             read_names, feature_matrix = encode_ava(args)
-            pre_feature_matrix = tfidf_ava(feature_matrix, args.preprocess)
+            feature_matrix = tfidf_ava(feature_matrix, args.preprocess)
             logger.info("Saving output to files.")
             with open(name_file, "wb") as file1:
                 pickle.dump(read_names, file1)
-            assert isinstance(pre_feature_matrix, sp.sparse.csr_matrix)
-            sp.sparse.save_npz(fm_file, pre_feature_matrix)
+            assert isinstance(feature_matrix, sp.sparse.csr_matrix)
+            sp.sparse.save_npz(fm_file, feature_matrix)
         else:
             qread_names, fread_names, tar_feature_matrix, que_feature_matrix = (
                 encode_qvt(args)
