@@ -8,12 +8,13 @@ def tf_transform(feature_matrix: csr_matrix):
     return feature_matrix
 
 
-def idf_transform(feature_matrix: csr_matrix):
+def idf_transform(feature_matrix: csr_matrix, idf=None):
     feature_matrix.data = np.ones_like(feature_matrix.data, dtype=np.float32)
 
-    col_sums = feature_matrix.sum(axis=0).A1
-    N = feature_matrix.shape[0]
-    idf = np.log((N + 1) / (col_sums + 1)) + 1
+    if idf is None:
+        col_sums = feature_matrix.sum(axis=0).A1
+        N = feature_matrix.shape[0]
+        idf = np.log((N + 1) / (col_sums + 1)) + 1
 
     feature_matrix.data *= idf[feature_matrix.indices]
 

@@ -318,12 +318,11 @@ def encode_ava(args) -> Tuple[List[str], np.ndarray]:
 def tfidf_qvt(
     tar_feature_matrix: np.ndarray, que_feature_matrix: np.ndarray, preprocess_type: str
 ) -> Tuple[np.ndarray, np.ndarray]:
-    transformer = TfidfTransformer(use_idf=True, smooth_idf=True)
     if preprocess_type == "IDF":
         tar_feature_matrix[tar_feature_matrix > 0] = 1
         que_feature_matrix[que_feature_matrix > 0] = 1
         tar_train, idf = idf_transform(tar_feature_matrix)
-        que_fit = que_feature_matrix.multiply(idf)
+        idf_transform(que_feature_matrix, idf)
     elif preprocess_type == "TF-IDF":
         tar_tf = tf_transform(tar_feature_matrix)
         que_idf = tf_transform(que_feature_matrix)
