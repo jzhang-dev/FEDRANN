@@ -174,7 +174,7 @@ class mp_SparseRandomProjection:
         )
 
         embeddings = safe_sparse_dot(data, random_matrix.T, dense_output=True)
-        assert isinstance(embeddings, np.ndarray), "Expected embeddings to be a numpy array."
+        assert isinstance(embeddings, np.ndarray)
         return embeddings
 
 

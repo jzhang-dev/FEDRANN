@@ -17,13 +17,15 @@ import pynear
 import time
 from sklearn.feature_extraction.text import TfidfTransformer
 from scipy.sparse._csr import csr_matrix
-from typing import Sequence, Type, Mapping,Literal
+from typing import Sequence, Type, Mapping, Literal
 from dataclasses import dataclass, field
 import numpy as np
 from numpy import ndarray
 
-def hamming_distance(x, y):  
+
+def hamming_distance(x, y):
     return np.count_nonzero(x != y)
+
 
 @dataclass
 class _NearestNeighbors:
@@ -31,10 +33,9 @@ class _NearestNeighbors:
         self, ref: np.ndarray, que: np.ndarray, n_neighbors: int
     ) -> np.ndarray:
         raise NotImplementedError()
-    
-def generalized_jaccard_similarity(
-    x: np.ndarray, y: np.ndarray
-) -> float:
+
+
+def generalized_jaccard_similarity(x: np.ndarray, y: np.ndarray) -> float:
     if x.shape[0] != 1 or y.shape[0] != 1:
         raise ValueError()
     if x.shape[1] != y.shape[1]:
@@ -45,35 +46,23 @@ def generalized_jaccard_similarity(
     return jaccard_similarity
 
 
-def generalized_jaccard_distance(
-    x: np.ndarray, y: np.ndarray
-) -> float:
-    return 1 - generalized_jaccard_similarity(x, y)
-
 class ExactNearestNeighbors(_NearestNeighbors):
     def get_neighbors(
-        self,        
+        self,
         ref: np.ndarray,
         que: np.ndarray,
         metric="cosine",
         n_neighbors: int = 20,
-        threads: int | None = 64
+        threads: int | None = 64,
     ):
-
-        if metric == "jaccard" and isinstance(data, csr_matrix):
-            data = data.toarray()
-        if metric == "generalized_jaccard":
-            _metric = generalized_jaccard_distance
-        else:
-            _metric = metric
-
         nbrs = sklearn.neighbors.NearestNeighbors(
-            n_neighbors=n_neighbors, metric=_metric,n_jobs=threads
+            n_neighbors=n_neighbors, metric=metric, n_jobs=threads
         )
         nbrs.fit(ref)
         nbr_distance, nbr_indices = nbrs.kneighbors(que)
-        return nbr_indices,nbr_distance
-    
+        return nbr_indices, nbr_distance
+
+
 class NNDescent(_NearestNeighbors):
     def get_neighbors(
         self,
@@ -103,29 +92,34 @@ class NNDescent(_NearestNeighbors):
 
         return nbr_indices, nbr_distance
 
+
 class ProductQuantization(_NearestNeighbors):
     def get_neighbors(
         self,
         ref: np.ndarray,
         que: np.ndarray,
         n_neighbors: int,
-        metric: Literal["euclidean","cosine"] = "euclidean",
+        metric: Literal["euclidean", "cosine"] = "euclidean",
         *,
         threads: int = 64,
         m=8,
         nbits=8,
         seed=455390,
-    ) -> np.ndarray:
+    ):
 
         if sparse.issparse(ref) or sparse.issparse(que):
             raise TypeError("ProductQuantization does not support sparse arrays.")
-        assert ref.shape[1] == que.shape[1], "Reference and query data must have the same feature dimensions."
+        assert (
+            ref.shape[1] == que.shape[1]
+        ), "Reference and query data must have the same feature dimensions."
 
         feature_count = ref.shape[1]
         if feature_count % m != 0:
             new_feature_count = feature_count // m * m
             rng = np.random.default_rng(seed)
-            feature_indices = rng.choice(feature_count, new_feature_count, replace=False, shuffle=False)
+            feature_indices = rng.choice(
+                feature_count, new_feature_count, replace=False, shuffle=False
+            )
             ref = ref[:, feature_indices]
             que = que[:, feature_indices]
         else:
@@ -135,20 +129,21 @@ class ProductQuantization(_NearestNeighbors):
             measure = faiss.METRIC_L2
         else:
             measure = faiss.METRIC_INNER_PRODUCT
-            ref = np.array(ref, order='C').astype('float32')
-            que = np.array(que, order='C').astype('float32')
+            ref = np.array(ref, order="C").astype("float32")
+            que = np.array(que, order="C").astype("float32")
             faiss.normalize_L2(ref)
             faiss.normalize_L2(que)
-            
-        param = f"PQ{m}" 
+
+        param = f"PQ{m}"
         index = faiss.index_factory(new_feature_count, param, measure)
 
         index.train(ref)
         index.add(ref)
 
         nbr_distances, nbr_indices = index.search(que, n_neighbors)
-        return nbr_indices,nbr_distances
-    
+        return nbr_indices, nbr_distances
+
+
 class HNSW(_NearestNeighbors):
     def get_neighbors(
         self,
@@ -161,12 +156,12 @@ class HNSW(_NearestNeighbors):
         M: int = 16,
         ef_construction: int = 200,
         ef_search: int = 50,
-    ) -> np.ndarray:
-        
+    ):
+
         if sparse.issparse(ref):
-            ref = ref.toarray()
+            ref = ref.toarray()  # type: ignore
         if sparse.issparse(que):
-            que = que.toarray()
+            que = que.toarray()  # type: ignore
         if metric == "euclidean":
             space = "l2"
         else:
@@ -181,7 +176,8 @@ class HNSW(_NearestNeighbors):
         p.add_items(ref, ids)
         p.set_ef(ef_search)
         nbr_indices, nbr_distance = p.knn_query(que, k=n_neighbors)
-        return nbr_indices,nbr_distance
+        return nbr_indices, nbr_distance
+
 
 class SimHash(_NearestNeighbors):
     @staticmethod
@@ -194,14 +190,14 @@ class SimHash(_NearestNeighbors):
         )
         hash_table = hash_table * 2 - 1
         return hash_table
-    
+
     @staticmethod
     def get_simhash(
         data: NDArray | csr_matrix, hash_table: NDArray
     ) -> NDArray[np.uint8]:
         simhash = data @ hash_table
         binary_simhash = np.where(simhash > 0, 1, 0).astype(np.uint8)
-        packed_simhash = np.packbits(binary_simhash, axis=-1) 
+        packed_simhash = np.packbits(binary_simhash, axis=-1)
         return packed_simhash
 
     def get_neighbors(
@@ -212,17 +208,18 @@ class SimHash(_NearestNeighbors):
         threads: int = 10,
         repeats=400,
         seed=20141025,
-    ) -> np.ndarray:
+    ):
         assert ref.shape != () and que.shape != ()
-        data = sparse.vstack([ref,que])
+        data = sparse.vstack([ref, que])
+        assert data.shape is not None
         kmer_num = data.shape[1]
         hash_table = self._get_hash_table(kmer_num, repeats=repeats, seed=seed)
-        simhash = self.get_simhash(data, hash_table)
-        ref_sim = simhash[:ref.shape[0]]
-        que_sim = simhash[ref.shape[0]:]
+        simhash = self.get_simhash(data, hash_table)  # type: ignore
+        ref_sim = simhash[: ref.shape[0]]
+        que_sim = simhash[ref.shape[0] :]
         vptree = pynear.VPTreeBinaryIndex()
         vptree.set(ref_sim)
         vptree_indices, vptree_distances = vptree.searchKNN(que_sim, n_neighbors + 1)
         nbr_indices = np.array(vptree_indices)[:, :-1][:, ::-1]
         nbr_distance = np.array(vptree_distances)[:, :-1][:, ::-1]
-        return nbr_indices,nbr_distance
+        return nbr_indices, nbr_distance
