@@ -21,13 +21,15 @@ RUN python3 -m venv /opt/venv \
 # 后续所有命令都用虚拟环境
 ENV PATH="/opt/venv/bin:$PATH"
 
-# 创建工作目录
-WORKDIR /workdir
+
 
 # 安装 SeqNeighbor
+WORKDIR /app
 COPY . .
 RUN pip install --no-cache-dir .
 
+WORKDIR /workdir
+ENV NUMBA_CACHE_DIR=/tmp/numba_cache
 
 # 设置默认命令
-ENTRYPOINT [ "/workdir/entrypoint.sh" ]
+ENTRYPOINT [ "/app/entrypoint.sh" ]
