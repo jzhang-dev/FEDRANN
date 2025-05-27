@@ -2,11 +2,10 @@ from scipy.sparse._csr import csr_matrix
 import numpy as np
 
 
-def tf_transform(data: csr_matrix):
-    row_sums = np.sum(data, axis=1)
-    tf_data = data / row_sums.reshape(-1, 1)
-    tf_data = csr_matrix(tf_data)
-    return tf_data
+def tf_transform(feature_matrix: csr_matrix):
+    row_sums = np.sum(feature_matrix, axis=1)
+    feature_matrix /= row_sums.reshape(-1, 1)
+    return feature_matrix
 
 
 def idf_transform(feature_matrix: csr_matrix):
