@@ -2,6 +2,9 @@
 
 set -exuo pipefail
 
+rm -rf test/output/
+mkdir -p test/output/
+
 SeqNeighbor encode \
     -q test/data/reads.fasta.gz \
     -t test/data/reads.fasta.gz \
