@@ -564,7 +564,7 @@ def main():
             )
         else:
             missing_files = ava_missing_files + qvt_missing_files
-            logger.error(f"{missing_files} file missing.")
+            raise RuntimeError(f"{missing_files} file missing.")
         df.to_csv(args.output_file, sep="\t", index=False)
         logger.info("SeqNeighbor qvt is complete!")
     else:
