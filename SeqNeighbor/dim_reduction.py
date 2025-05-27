@@ -1,3 +1,4 @@
+from typing import cast
 from dataclasses import dataclass
 import math
 import scipy as sp
@@ -6,13 +7,11 @@ from numpy.typing import NDArray
 from scipy import sparse
 from scipy.sparse import csr_matrix
 from sklearn.preprocessing import normalize as normalize_function
-import anndata
 import sklearn
-from sklearn.decomposition import TruncatedSVD
 from sklearn import random_projection
 from sklearn.manifold import Isomap
 import umap
-from sklearn.decomposition import PCA
+from sklearn.decomposition import PCA as sklearn_PCA
 from sklearn.utils.extmath import safe_sparse_dot
 
 
@@ -88,16 +87,10 @@ class SpectralEmbedding(_DimensionReduction):
         return embedding
 
 
-class TruncatedSVD(_DimensionReduction):
-    def transform(self, data, n_dimensions: int):
-        reducer = TruncatedSVD(n_components=n_dimensions)
-        embedding = reducer.fit(data)
-        return embedding
-
 
 class PCA(_DimensionReduction):
     def transform(self, data, n_dimensions: int):
-        pca = sklearn.decomposition.PCA(n_components=n_dimensions)
+        pca = sklearn_PCA(n_components=n_dimensions)
         dim_redu = pca.fit_transform(data)
         return dim_redu
 
@@ -152,7 +145,7 @@ class mp_SparseRandomProjection:
         data = rng.binomial(1, 0.5, size=np.size(indices)) * 2 - 1
 
         # build the CSR structure by concatenating the rows
-        components = sp.csr_matrix(
+        components = csr_matrix(
             (data, indices, indptr), shape=(n_components, n_features)
         )
         return np.sqrt(1 / density) / np.sqrt(n_components) * components
@@ -165,7 +158,8 @@ class mp_SparseRandomProjection:
         batch_size: int = 10000,
         seed: int = 521022,
         threads: int = 1,
-    ) -> np.ndarray:
+    ) -> NDArray:
+        assert data.shape is not None
         if density == "auto":
             _density = 1 / math.sqrt(data.shape[1])
         else:
@@ -180,6 +174,7 @@ class mp_SparseRandomProjection:
         )
 
         embeddings = safe_sparse_dot(data, random_matrix.T, dense_output=True)
+        assert isinstance(embeddings, np.ndarray), "Expected embeddings to be a numpy array."
         return embeddings
 
 
