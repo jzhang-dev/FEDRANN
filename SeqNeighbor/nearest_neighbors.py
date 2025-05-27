@@ -23,6 +23,7 @@ import numpy as np
 from numpy import ndarray
 
 
+
 def hamming_distance(x, y):
     return np.count_nonzero(x != y)
 

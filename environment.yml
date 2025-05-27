@@ -25,5 +25,5 @@ dependencies:
   - scanpy==1.10.1
   - scikit-learn==1.5.0
   - scipy
-  - sharedmem
+  - bioconda::sharedmem
   - xxhash
