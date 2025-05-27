@@ -1,15 +1,16 @@
 import gzip, json, collections
-from typing import Sequence, Mapping, Collection,Optional
+from typing import Sequence, Mapping, Collection, Optional
 from Bio import SeqIO
 import scipy.sparse as sp
 import numpy as np
 import pandas as pd
-from .fastx_io import FastqLoader
-import time 
+from .fastx_io import FastqLoader, FastaLoader
+import time
 import xxhash
 from multiprocessing import Pool
 from functools import partial
 import gc
+
 
 def init_reverse_complement():
     TRANSLATION_TABLE = str.maketrans("ACTGactg", "TGACtgac")
@@ -30,11 +31,29 @@ def init_reverse_complement():
 reverse_complement = init_reverse_complement()
 
 
-def load_reads(fasta_path: str):
+def load_reads(file_path: str):
     read_sequences = []
     read_names = []
     read_orientations = []
-    loader = FastqLoader(file_path=fasta_path)
+    if (
+        file_path.endswith(".fasta")
+        or file_path.endswith(".fa")
+        or file_path.endswith(".fasta.gz")
+        or file_path.endswith(".fa.gz")
+    ):
+        # Load FASTA file
+        loader = FastaLoader(file_path=file_path)
+    elif (
+        file_path.endswith(".fastq")
+        or file_path.endswith(".fq")
+        or file_path.endswith(".fastq.gz")
+        or file_path.endswith(".fq.gz")
+    ):
+        loader = FastqLoader(file_path=file_path)
+    else:
+        raise ValueError(
+            "Unsupported file format. Please provide a FASTA or FASTQ file."
+        )
     for record in loader:  # 迭代获取每条序列
         seq = str(record.sequence)
         read_sequences.append(seq)
@@ -49,10 +68,10 @@ def load_reads(fasta_path: str):
     return read_names, read_orientations, read_sequences
 
 
-def process_sequence(args, k, seed, max_hash,preset_col_ind):
+def process_sequence(args, k, seed, max_hash, preset_col_ind):
     row_idx, seq = args
     seq_counts = collections.defaultdict(int)
-    kmers = (seq[p:p+k] for p in range(len(seq) - k + 1))
+    kmers = (seq[p : p + k] for p in range(len(seq) - k + 1))
     # Count kmers in this sequence
     for kmer in kmers:
         hashed = xxhash.xxh3_64(kmer, seed=seed).intdigest()
@@ -73,16 +92,28 @@ def process_sequence(args, k, seed, max_hash,preset_col_ind):
         result[i] = [row_idx, hashed, cnt]
     return result
 
-def build_sparse_matrix_multiprocess(read_sequences, k, seed, sample_fraction, min_multiplicity, n_processes, preset_col_ind = []):
+
+def build_sparse_matrix_multiprocess(
+    read_sequences,
+    k,
+    seed,
+    sample_fraction,
+    min_multiplicity,
+    n_processes,
+    preset_col_ind=[],
+):
     all_kmer_number = 2**64
     max_hash = all_kmer_number * sample_fraction
     # Parallel processing with imap
-    with Pool(n_processes,maxtasksperchild=100) as pool:
-        func = partial(process_sequence, 
-                      k=k, seed=seed, 
-                      max_hash=max_hash,
-                      preset_col_ind=preset_col_ind)
-        
+    with Pool(n_processes, maxtasksperchild=100) as pool:
+        func = partial(
+            process_sequence,
+            k=k,
+            seed=seed,
+            max_hash=max_hash,
+            preset_col_ind=preset_col_ind,
+        )
+
         # Process results incrementally
         row_ind, col_ind, data = [], [], []
         for result in pool.imap(func, enumerate(read_sequences), chunksize=1000):
@@ -105,16 +136,15 @@ def build_sparse_matrix_multiprocess(read_sequences, k, seed, sample_fraction, m
     n_cols = max(re_col_ind) + 1
 
     _feature_matrix = sp.csr_matrix(
-        (data, (row_ind, re_col_ind)),
-        shape=(n_rows, n_cols),
-        dtype=np.int32
+        (data, (row_ind, re_col_ind)), shape=(n_rows, n_cols), dtype=np.int32
     )
 
     # Filter by multiplicity
     col_sums = _feature_matrix.sum(axis=0).A1
     mask = col_sums >= min_multiplicity
     feature_matrix = _feature_matrix[:, mask]
-    return feature_matrix,set(col_ind)
+    return feature_matrix, set(col_ind)
+
 
 def encode_reads(
     fasta_path: str,
@@ -133,7 +163,7 @@ def encode_reads(
     info_df = pd.read_table(info_path).set_index("read_name")
 
     # Load reads
-    read_names, read_orientations, read_sequences = load_reads(fasta_path=fasta_path)
+    read_names, read_orientations, read_sequences = load_reads(file_path=fasta_path)
 
     feature_matrix = build_sparse_matrix_multiprocess(
         read_sequences=read_sequences,
@@ -141,7 +171,7 @@ def encode_reads(
         seed=seed,
         sample_fraction=sample_fraction,
         min_multiplicity=min_multiplicity,
-        n_processes=processes
+        n_processes=processes,
     )
 
     # Build metadata
