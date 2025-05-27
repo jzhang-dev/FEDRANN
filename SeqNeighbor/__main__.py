@@ -16,9 +16,7 @@ from math import floor, ceil
 from os.path import abspath, join, splitext
 import scipy as sp
 import json, pickle
-from sklearn.feature_extraction.text import TfidfTransformer
 import numpy as np
-from numpy import matlib, ndarray
 from . import __version__, __description__
 import logging
 import colorlog

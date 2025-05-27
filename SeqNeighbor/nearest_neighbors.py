@@ -1,12 +1,8 @@
 from dataclasses import dataclass, field
-import mmh3
-from functools import lru_cache
-import collections
 from typing import Sequence, Type, Mapping, Iterable, Literal
 from scipy import sparse
 from scipy.sparse._csr import csr_matrix
 import numpy as np
-from numpy import matlib, ndarray
 from numpy.typing import NDArray
 import sklearn.neighbors
 import pynndescent
@@ -15,12 +11,7 @@ import faiss
 from math import ceil
 import pynear
 import time
-from sklearn.feature_extraction.text import TfidfTransformer
 from scipy.sparse._csr import csr_matrix
-from typing import Sequence, Type, Mapping, Literal
-from dataclasses import dataclass, field
-import numpy as np
-from numpy import ndarray
 
 
 
