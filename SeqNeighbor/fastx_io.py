@@ -20,6 +20,7 @@ from typing import (
     Generator,
     TypeVar,
     Generic,
+    NamedTuple,
     cast,
 )
 from dataclasses import dataclass, field
@@ -27,9 +28,9 @@ from isal import igzip
 import numpy as np
 from numpy.typing import NDArray
 
-# from .custom_logging import logger
 
 T = TypeVar("T")
+
 
 @overload
 def open_gzipped(
@@ -73,47 +74,46 @@ def get_fastx_extension(file_path: str) -> str:
         raise ValueError(f"Invalid FASTX path: {file_path!r}")
 
 
-def concatenate_fastx_files(input_paths: Sequence[str], output_path: str) -> None:
-    if len(input_paths) < 2:
-        raise ValueError("Requires two or more files to concatenate.")
+def init_reverse_complement():
+    TRANSLATION_TABLE = str.maketrans("ACTGactg", "TGACtgac")
 
-    command = ["cat"] + list(input_paths) + [">", output_path]
-    command_str = " ".join(command)
-    subprocess.run(command_str, shell=True, check=True)
+    def reverse_complement(sequence: str) -> str:
+        """
+        >>> reverse_complement("AATC")
+        'GATT'
+        >>> reverse_complement("CCANT")
+        'ANTGG'
+        """
+        sequence = str(sequence)
+        return sequence.translate(TRANSLATION_TABLE)[::-1]
 
-
-class FastxRecord:
-    name: str
-    sequence: str
-
-
-@dataclass
-class FastaRecord(FastxRecord):
-    name: str
-    sequence: str
-
-    def __post_init__(self):
-        self.sequence = self.sequence.upper()
-
-    @staticmethod
-    def from_lines(lines: Sequence[str]) -> 'FastaRecord':
-        name = lines[0][1:-1].split()[0]
-        sequence = ''.join(line.strip() for line in lines[1:])  # 合并多行序列
-        return FastaRecord(name, sequence)
+    return reverse_complement
 
 
-@dataclass
-class FastqRecord(FastxRecord):
-    name: str
-    sequence: str
-    quality: NDArray[np.uint8]
+reverse_complement = init_reverse_complement()
 
-    @classmethod
-    def from_lines(cls, lines: Sequence[str], offset: int = 33) -> "FastqRecord":
-        name = lines[0][1:-1].split(" ")[0]
-        sequence = lines[1][:-1]
-        quality = np.array([ord(q) - offset for q in lines[3][:-1]], dtype=np.uint8)
-        return cls(name, sequence, quality)
+
+
+
+FastxRecord = NamedTuple(
+    "FastxRecord",
+    [
+        ("name", str),
+        ("sequence", str),
+        ("orientation", int),
+    ],
+    defaults=[("", ""), 0],
+)
+
+def get_reverse_complement_record(record: FastxRecord) -> FastxRecord:
+    """
+    Get the reverse complement of a FastxRecord.
+    """
+    return FastxRecord(
+        name=record.name,
+        sequence=reverse_complement(record.sequence),
+        orientation=1 - record.orientation,
+    )
 
 
 @dataclass
@@ -122,13 +122,12 @@ class _DataLoader(Generic[T]):
 
     def __iter__(self) -> Iterator[T]:
         raise NotImplementedError
-    
+
     def open(self):
         return self
 
 
-
-class FastqLoader(_DataLoader[FastqRecord]):
+class FastqLoader(_DataLoader[FastxRecord]):
     @staticmethod
     def _read_item(file_obj: TextIO) -> Iterator[Sequence[str]]:
         item = []
@@ -146,21 +145,24 @@ class FastqLoader(_DataLoader[FastqRecord]):
             yield item
 
     @staticmethod
-    def _parse_item(item: Sequence[str]) -> FastqRecord:
-        return FastqRecord.from_lines(item)
+    def _parse_item(item: Sequence[str]) -> FastxRecord:
+        lines = item
+        name = lines[0][1:-1].split(" ")[0]
+        sequence = lines[1][:-1]
+        return FastxRecord(name=name, sequence=sequence)
 
-    def __iter__(self) -> Iterator[FastqRecord]:
-        with open_gzipped(self.file_path, 'rt') as f:
+    def __iter__(self) -> Iterator[FastxRecord]:
+        with open_gzipped(self.file_path, "rt") as f:
             for _, item in enumerate(self._read_item(f)):
                 yield self._parse_item(item)
 
 
-class FastaLoader(_DataLoader[FastaRecord]):
+class FastaLoader(_DataLoader[FastxRecord]):
     @staticmethod
     def _read_item(file_obj: TextIO) -> Iterator[Sequence[str]]:
         item = []
         for line in file_obj:
-            if line.startswith('>'):
+            if line.startswith(">"):
                 if item:  # 如果已经有数据，先返回
                     yield item
                     item = []
@@ -171,10 +173,13 @@ class FastaLoader(_DataLoader[FastaRecord]):
             yield item
 
     @staticmethod
-    def _parse_item(item: Sequence[str]) -> FastaRecord:
-        return FastaRecord.from_lines(item)
+    def _parse_item(item: Sequence[str]) -> FastxRecord:
+        lines = item
+        name = lines[0][1:-1].split()[0]
+        sequence = "".join(line.strip() for line in lines[1:])  # 合并多行序列
+        return FastxRecord(name=name, sequence=sequence)
 
-    def __iter__(self) -> Iterator[FastaRecord]:
-        with open_gzipped(self.file_path, 'rt') as f:
+    def __iter__(self) -> Iterator[FastxRecord]:
+        with open_gzipped(self.file_path, "rt") as f:
             for item in self._read_item(f):
                 yield self._parse_item(item)

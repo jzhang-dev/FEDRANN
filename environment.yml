@@ -5,8 +5,7 @@ channels:
   - defaults
 dependencies:
   - biopython
-  - colorlog
-  - pytorch::faiss-cpu==1.11.0
+  - anaconda::colorama
   - hnswlib==0.7.0
   - memory_profiler==0.61.0
   - networkx
