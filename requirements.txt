@@ -1,6 +1,5 @@
 biopython
-colorlog
-faiss-cpu
+colorama
 hnswlib == 0.7.0
 ipykernel
 isal
@@ -10,7 +9,6 @@ networkx
 nltk
 numpy == 1.26.4
 pandas
-pynear
 pynndescent == 0.5.12
 pysam == 0.22.1
 requests

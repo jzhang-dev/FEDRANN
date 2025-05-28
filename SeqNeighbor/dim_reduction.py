@@ -149,7 +149,7 @@ class mp_SparseRandomProjection:
         data: csr_matrix | NDArray,
         n_dimensions: int,
         density: float | str = "auto",
-        batch_size: int = 10000,
+        batch_size: int = 10_000,
         seed: int = 521022,
         threads: int = 1,
     ) -> NDArray:

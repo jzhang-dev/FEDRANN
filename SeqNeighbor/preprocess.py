@@ -3,8 +3,8 @@ import numpy as np
 
 
 def tf_transform(feature_matrix: csr_matrix):
-    row_sums = np.sum(feature_matrix, axis=1)
-    feature_matrix /= row_sums.reshape(-1, 1)
+    row_sums = feature_matrix.sum(axis=1).A1
+    feature_matrix /= row_sums
     return feature_matrix
 
 
@@ -13,6 +13,7 @@ def idf_transform(feature_matrix: csr_matrix, idf=None):
 
     if idf is None:
         col_sums = feature_matrix.sum(axis=0).A1
+        assert feature_matrix.shape is not None
         N = feature_matrix.shape[0]
         idf = np.log((N + 1) / (col_sums + 1)) + 1
 
