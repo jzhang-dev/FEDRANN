@@ -83,7 +83,7 @@ def get_feature_matrix(
     k: int,
     sample_fraction: float,
     min_multiplicity: int = 2,
-    batch_size: int = 1_000,
+    batch_size: int = 10_000,
 ):
     threads = globals.threads
     seed = globals.seed + 578
@@ -126,13 +126,23 @@ def get_feature_matrix(
             strands = [record.orientation for record in records]
             return i0, indices, hash_values, multiplicity_values, read_names, strands
 
+        logger.debug("Loading reads")
+        batches: dict[int, tuple[int, list[FastxRecord]] | None] = {
+            i0: (i0, records) for i0, records in loader
+        }
+
         row_indices, col_indices, data = array("L", []), array("Q", []), array("H", [])
         read_names, strands = [], []
 
         def reduce(
-            i0, indices, hash_values, multiplicity_values, batch_read_names, batch_strands
-        ):  
-            del batches[i0] 
+            i0,
+            indices,
+            hash_values,
+            multiplicity_values,
+            batch_read_names,
+            batch_strands,
+        ):
+            batches[i0] = None
             gc.collect()
 
             row_indices.extend(indices)
@@ -140,9 +150,6 @@ def get_feature_matrix(
             data.extend(multiplicity_values)
             read_names.extend(batch_read_names)
             strands.extend(batch_strands)
-
-        logger.debug("Loading reads")
-        batches = {i0: (i0, records) for i0, records in loader}
 
         logger.debug(f"Extracting k-mers from reads ({threads=} {batch_size=})")
         pool.map(work, batches.values(), reduce=reduce)
