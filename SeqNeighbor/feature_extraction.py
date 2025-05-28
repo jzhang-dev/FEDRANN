@@ -1,5 +1,7 @@
 import gzip, json, collections, gc
 from typing import Sequence, Mapping, Collection, Optional, Iterable
+from multiprocessing import Pool
+from functools import partial
 from array import array
 from Bio import SeqIO
 import scipy.sparse as sp
@@ -18,7 +20,6 @@ import xxhash
 from multiprocessing import Pool
 from functools import partial
 import gc
-import sharedmem
 
 from . import globals
 from .custom_logging import logger
@@ -78,6 +79,39 @@ def _remove_empty_columns(x: csr_matrix) -> csr_matrix:
     return x[:, non_empty_cols]
 
 
+def _process_batch(batch, k: int, seed: int, max_hash: int) -> tuple:
+    i0, records = batch
+    indices = array("L", [])
+    hash_values = array("Q", [])
+    multiplicity_values = array("H", [])
+    max_multiplicity = 2**16 - 1
+
+    for i, record in enumerate(records):
+        if len(record.sequence) < k:
+            raise ValueError()
+
+        counts = collections.Counter()
+        kmers = (
+            record.sequence[p : p + k] for p in range(len(record.sequence) - k + 1)
+        )
+        for kmer in kmers:
+            hash_value = xxhash.xxh3_64(kmer, seed=seed).intdigest()
+            if hash_value < max_hash:
+                counts[hash_value] += 1
+
+        counts = {
+            hash_value: min(multiplicity, max_multiplicity)
+            for hash_value, multiplicity in counts.items()
+        }
+        indices.extend([i0 + i] * len(counts))
+        hash_values.extend(counts.keys())
+        multiplicity_values.extend(counts.values())
+
+    read_names = [record.name for record in records]
+    strands = [record.orientation for record in records]
+    return i0, indices, hash_values, multiplicity_values, read_names, strands
+
+
 def get_feature_matrix(
     input_path: str,
     k: int,
@@ -91,68 +125,40 @@ def get_feature_matrix(
     max_hash = int(2**64 - 1 * sample_fraction)
     loader = load_reads(input_path, batch_size=batch_size)
 
-    with sharedmem.MapReduce(np=threads) as pool:
+    logger.debug("Loading reads")
+    batches: dict[int, tuple[int, list[FastxRecord]] | None] = {
+        i0: (i0, records) for i0, records in loader
+    }
 
-        def work(batch):
-            i0, records = batch
-            indices = array("L", [])
-            hash_values = array("Q", [])
-            multiplicity_values = array("H", [])
-            max_multiplicity = 2**16 - 1
+    row_indices, col_indices, data = array("L", []), array("Q", []), array("H", [])
+    read_names, strands = [], []
+    fished_batches = 0
 
-            for i, record in enumerate(records):
-                if len(record.sequence) < k:
-                    raise ValueError()
+    def callback(
+        i0,
+        indices,
+        hash_values,
+        multiplicity_values,
+        batch_read_names,
+        batch_strands,
+    ):
+        nonlocal fished_batches
 
-                counts = collections.Counter()
-                kmers = (
-                    record.sequence[p : p + k]
-                    for p in range(len(record.sequence) - k + 1)
-                )
-                for kmer in kmers:
-                    hash_value = xxhash.xxh3_64(kmer, seed=seed).intdigest()
-                    if hash_value < max_hash:
-                        counts[hash_value] += 1
+        batches[i0] = None
+        row_indices.extend(indices)
+        col_indices.extend(hash_values)
+        data.extend(multiplicity_values)
+        read_names.extend(batch_read_names)
+        strands.extend(batch_strands)
 
-                counts = {
-                    hash_value: min(multiplicity, max_multiplicity)
-                    for hash_value, multiplicity in counts.items()
-                }
-                indices.extend([i0 + i] * len(counts))
-                hash_values.extend(counts.keys())
-                multiplicity_values.extend(counts.values())
+        fished_batches += 1
+        logger.debug("Progress: %.2f%%", fished_batches / len(batches) * 100)
 
-            read_names = [record.name for record in records]
-            strands = [record.orientation for record in records]
-            return i0, indices, hash_values, multiplicity_values, read_names, strands
-
-        logger.debug("Loading reads")
-        batches: dict[int, tuple[int, list[FastxRecord]] | None] = {
-            i0: (i0, records) for i0, records in loader
-        }
-
-        row_indices, col_indices, data = array("L", []), array("Q", []), array("H", [])
-        read_names, strands = [], []
-
-        def reduce(
-            i0,
-            indices,
-            hash_values,
-            multiplicity_values,
-            batch_read_names,
-            batch_strands,
-        ):
-            batches[i0] = None
-            gc.collect()
-
-            row_indices.extend(indices)
-            col_indices.extend(hash_values)
-            data.extend(multiplicity_values)
-            read_names.extend(batch_read_names)
-            strands.extend(batch_strands)
-
-        logger.debug(f"Extracting k-mers from reads ({threads=} {batch_size=})")
-        pool.map(work, batches.values(), reduce=reduce)
+    logger.debug(f"Extracting k-mers from reads ({threads=} {batch_size=})")
+    with Pool(threads, maxtasksperchild=1000) as pool:
+        work = partial(_process_batch, k=k, seed=seed, max_hash=max_hash)
+        for result in pool.imap_unordered(work, batches.values(), chunksize=batch_size):
+            callback(*result)
 
     row_indices_numpy = np.frombuffer(row_indices, dtype=np.uint32)
     col_indices_numpy = np.frombuffer(col_indices, dtype=np.uint64)
