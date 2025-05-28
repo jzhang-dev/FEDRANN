@@ -5,7 +5,7 @@ set -exuo pipefail
 rm -rf test/output/
 mkdir -p test/output/
 
-SeqNeighbor \
+./entrypoint.sh \
     -i test/data/reads.fasta.gz \
     -o test/output/ \
     -k 15 \
