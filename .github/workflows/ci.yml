@@ -24,29 +24,18 @@ jobs:
       run: |
         ./entrypoint.sh --help
 
-    - name: Test feature extraction
+    - name: Test workflow
       shell: bash -l {0}
       run: |
-        ./entrypoint.sh encode\
-            -q test/data/reads.fasta.gz \
-            -t test/data/reads.fasta.gz \
-            -o test/output/feature_extraction \
-            -p IDF \
+        ./entrypoint.sh \
+            -i test/data/reads.fasta.gz \
+            -o test/output/ \
             -k 15 \
             --kmer-sample-fraction 0.05 \
-            --kmer-sample-seed 602 \
+            --seed 602 \
             --kmer-min-multiplicity 2
 
-    - name: Test kNN
-      shell: bash -l {0}
-      run: |
-        ./entrypoint.sh qvt \
-            -i test/output/feature_extraction \
-            -d SparseRP \
-            -n 500 \
-            --knn-method NNDescent \
-            -o test/output/KNN \
-            --n-neighbors 20 
+
 
 
     
