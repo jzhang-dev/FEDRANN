@@ -134,7 +134,7 @@ def get_feature_matrix(
         ):  
             del batches[i0] 
             gc.collect()
-            
+
             row_indices.extend(indices)
             col_indices.extend(hash_values)
             data.extend(multiplicity_values)
@@ -161,6 +161,8 @@ def get_feature_matrix(
         row_indices_numpy = row_indices_numpy[filtered_indices]
         col_indices_numpy = col_indices_numpy[filtered_indices]
         data_numpy = data_numpy[filtered_indices]
+        del filtered_indices
+        gc.collect()
 
         # Remove empty columns
         logger.debug("Removing empty columns")
