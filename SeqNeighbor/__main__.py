@@ -22,7 +22,6 @@ import json, pickle
 import numpy as np
 from numpy.typing import NDArray
 import logging
-import colorlog
 
 from . import __version__, __description__
 
