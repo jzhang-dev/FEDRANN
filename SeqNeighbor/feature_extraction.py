@@ -93,7 +93,8 @@ def get_feature_matrix(
 
     with sharedmem.MapReduce(np=threads) as pool:
 
-        def work(i0, records):
+        def work(batch):
+            i0, records = batch
             indices = array("L", [])
             hash_values = array("Q", [])
             multiplicity_values = array("H", [])
@@ -128,15 +129,20 @@ def get_feature_matrix(
         row_indices, col_indices, data = array("L", []), array("Q", []), array("H", [])
         read_names, strands = [], []
 
-        def reduce(indices, hash_values, multiplicity_values, batch_read_names, batch_strands):
+        def reduce(
+            indices, hash_values, multiplicity_values, batch_read_names, batch_strands
+        ):
             row_indices.extend(indices)
             col_indices.extend(hash_values)
             data.extend(multiplicity_values)
             read_names.extend(batch_read_names)
             strands.extend(batch_strands)
 
+        logger.debug("Loading reads")
+        batches = list(loader)
+
         logger.debug("Extracting k-mers from reads")
-        pool.map(work, loader, reduce=reduce)
+        pool.map(work, batches, reduce=reduce)
 
         row_indices_numpy = np.array(row_indices, dtype=np.int32)
         col_indices_numpy = np.array(col_indices, dtype=np.uint64)
@@ -153,12 +159,19 @@ def get_feature_matrix(
         col_indices_numpy = col_indices_numpy[filtered_indices]
         data_numpy = data_numpy[filtered_indices]
 
+        # Remove empty columns
+        logger.debug("Removing empty columns")
+        _, col_indices_numpy = np.unique(col_indices_numpy, return_inverse=True)
+
         # Create sparse matrix
         logger.debug("Creating sparse feature matrix")
+        n_rows = row_indices_numpy.max() + 1
+        n_cols = col_indices_numpy.max() + 1
         feature_matrix = csr_matrix(
             (data_numpy, (row_indices_numpy, col_indices_numpy)),
+            shape=(n_rows, n_cols),
+            dtype=np.uint16,
         )
-        feature_matrix = _remove_empty_columns(feature_matrix)
 
         logger.debug("Feature matrix shape: %s", feature_matrix.shape)
         return feature_matrix, read_names, strands

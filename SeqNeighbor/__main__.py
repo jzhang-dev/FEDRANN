@@ -105,20 +105,6 @@ def parse_command_line_arguments():
         default=1,
     )
     parser.add_argument(
-        "-o",
-        "--output-file",
-        type=str,
-        default="neighbor_info.tsv",
-        help="Path to neighbor information output.",
-    )
-    parser.add_argument(
-        "--threads",
-        type=int,
-        required=False,
-        default="1",
-        help="Threads numbers used for finding neighbors.",
-    )
-    parser.add_argument(
         "-d",
         "--dimension-reduction",
         type=str,

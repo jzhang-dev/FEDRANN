@@ -93,17 +93,10 @@ def init_reverse_complement():
 reverse_complement = init_reverse_complement()
 
 
-
-
-FastxRecord = NamedTuple(
-    "FastxRecord",
-    [
-        ("name", str),
-        ("sequence", str),
-        ("orientation", int),
-    ],
-    defaults=[("", ""), 0],
-)
+class FastxRecord(NamedTuple):
+    name: str
+    sequence: str
+    orientation: int = 0
 
 def get_reverse_complement_record(record: FastxRecord) -> FastxRecord:
     """
