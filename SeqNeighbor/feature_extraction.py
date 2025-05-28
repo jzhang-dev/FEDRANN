@@ -124,14 +124,17 @@ def get_feature_matrix(
 
             read_names = [record.name for record in records]
             strands = [record.orientation for record in records]
-            return indices, hash_values, multiplicity_values, read_names, strands
+            return i0, indices, hash_values, multiplicity_values, read_names, strands
 
         row_indices, col_indices, data = array("L", []), array("Q", []), array("H", [])
         read_names, strands = [], []
 
         def reduce(
-            indices, hash_values, multiplicity_values, batch_read_names, batch_strands
-        ):
+            i0, indices, hash_values, multiplicity_values, batch_read_names, batch_strands
+        ):  
+            del batches[i0] 
+            gc.collect()
+            
             row_indices.extend(indices)
             col_indices.extend(hash_values)
             data.extend(multiplicity_values)
@@ -139,10 +142,10 @@ def get_feature_matrix(
             strands.extend(batch_strands)
 
         logger.debug("Loading reads")
-        batches = list(loader)
+        batches = {i0: (i0, records) for i0, records in loader}
 
         logger.debug("Extracting k-mers from reads")
-        pool.map(work, batches, reduce=reduce)
+        pool.map(work, batches.values(), reduce=reduce)
 
         row_indices_numpy = np.array(row_indices, dtype=np.int32)
         col_indices_numpy = np.array(col_indices, dtype=np.uint64)
