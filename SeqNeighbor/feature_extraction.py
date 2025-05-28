@@ -70,15 +70,6 @@ def _get_indices_by_min_count(x: NDArray, min_count: int = 2) -> NDArray:
     return matching_indices
 
 
-def _remove_empty_columns(x: csr_matrix) -> csr_matrix:
-    # 计算每列的非零元素数
-    col_counts = x.getnnz(axis=0)
-    # 获取非空列的索引
-    non_empty_cols = np.where(col_counts > 0)[0]
-    # 保留非空列
-    return x[:, non_empty_cols]
-
-
 def _process_batch(batch, k: int, seed: int, max_hash: int) -> tuple:
     i0, records = batch
     indices = array("L", [])
@@ -157,7 +148,7 @@ def get_feature_matrix(
     logger.debug(f"Extracting k-mers from reads ({threads=} {batch_size=})")
     with Pool(threads, maxtasksperchild=1000) as pool:
         work = partial(_process_batch, k=k, seed=seed, max_hash=max_hash)
-        for result in pool.imap_unordered(work, batches.values(), chunksize=batch_size):
+        for result in pool.imap_unordered(work, batches.values()):
             callback(*result)
 
     row_indices_numpy = np.frombuffer(row_indices, dtype=np.uint32)
