@@ -198,7 +198,7 @@ def get_neighbors_ava(embedding_matrix: NDArray, method: str):
             diversify_prob=1.0,
             pruning_degree_multiplier=1.5,
             low_memory=True,
-            n_jobs=64,
+            n_jobs=globals.threads,
             verbose=True,
         )
     elif method.lower() == "hnsw":
@@ -249,6 +249,8 @@ def get_output_dataframe(
 
 def main():
     args = parse_command_line_arguments()
+    globals.threads = args.threads
+    globals.seed = args.seed
 
     output_dir = abspath(args.output_dir)
     os.makedirs(output_dir, exist_ok=True)
