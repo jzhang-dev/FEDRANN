@@ -83,7 +83,7 @@ def get_feature_matrix(
     k: int,
     sample_fraction: float,
     min_multiplicity: int = 2,
-    batch_size: int = 10_000,
+    batch_size: int = 1_000,
 ):
     threads = globals.threads
     seed = globals.seed + 578
@@ -144,39 +144,39 @@ def get_feature_matrix(
         logger.debug("Loading reads")
         batches = {i0: (i0, records) for i0, records in loader}
 
-        logger.debug("Extracting k-mers from reads")
+        logger.debug(f"Extracting k-mers from reads ({threads=} {batch_size=})")
         pool.map(work, batches.values(), reduce=reduce)
 
-        row_indices_numpy = np.array(row_indices, dtype=np.int32)
-        col_indices_numpy = np.array(col_indices, dtype=np.uint64)
-        data_numpy = np.array(data, dtype=np.uint16)
-        del row_indices, col_indices, data
-        gc.collect()
+    row_indices_numpy = np.frombuffer(row_indices, dtype=np.uint32)
+    col_indices_numpy = np.frombuffer(col_indices, dtype=np.uint64)
+    data_numpy = np.frombuffer(data, dtype=np.uint16)
+    del row_indices, col_indices, data
+    gc.collect()
 
-        # Filter out indices with multiplicity < min_multiplicity
-        logger.debug("Filtering k-mers by minimum multiplicity")
-        filtered_indices = _get_indices_by_min_count(
-            col_indices_numpy, min_count=min_multiplicity
-        )
-        row_indices_numpy = row_indices_numpy[filtered_indices]
-        col_indices_numpy = col_indices_numpy[filtered_indices]
-        data_numpy = data_numpy[filtered_indices]
-        del filtered_indices
-        gc.collect()
+    # Filter out indices with multiplicity < min_multiplicity
+    logger.debug("Filtering k-mers by minimum multiplicity")
+    filtered_indices = _get_indices_by_min_count(
+        col_indices_numpy, min_count=min_multiplicity
+    )
+    row_indices_numpy = row_indices_numpy[filtered_indices]
+    col_indices_numpy = col_indices_numpy[filtered_indices]
+    data_numpy = data_numpy[filtered_indices]
+    del filtered_indices
+    gc.collect()
 
-        # Remove empty columns
-        logger.debug("Removing empty columns")
-        _, col_indices_numpy = np.unique(col_indices_numpy, return_inverse=True)
+    # Remove empty columns
+    logger.debug("Removing empty columns")
+    _, col_indices_numpy = np.unique(col_indices_numpy, return_inverse=True)
 
-        # Create sparse matrix
-        logger.debug("Creating sparse feature matrix")
-        n_rows = row_indices_numpy.max() + 1
-        n_cols = col_indices_numpy.max() + 1
-        feature_matrix = csr_matrix(
-            (data_numpy, (row_indices_numpy, col_indices_numpy)),
-            shape=(n_rows, n_cols),
-            dtype=np.uint16,
-        )
+    # Create sparse matrix
+    logger.debug("Creating sparse feature matrix")
+    n_rows = row_indices_numpy.max() + 1
+    n_cols = col_indices_numpy.max() + 1
+    feature_matrix = csr_matrix(
+        (data_numpy, (row_indices_numpy, col_indices_numpy)),
+        shape=(n_rows, n_cols),
+        dtype=np.uint16,
+    )
 
-        logger.debug("Feature matrix shape: %s", feature_matrix.shape)
-        return feature_matrix, read_names, strands
+    logger.debug("Feature matrix shape: %s", feature_matrix.shape)
+    return feature_matrix, read_names, strands

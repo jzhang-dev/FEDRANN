@@ -11,5 +11,6 @@ mkdir -p test/output/
     -k 15 \
     --kmer-sample-fraction 0.05 \
     --seed 602 \
-    --kmer-min-multiplicity 2
+    --kmer-min-multiplicity 2 \
+    --threads 2
 
