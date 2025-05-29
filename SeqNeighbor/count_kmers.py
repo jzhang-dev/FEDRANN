@@ -54,39 +54,42 @@ def run_jellyfish(
     
     # 定义实际执行的任务函数
     def _run_jellyfish():
-        try:
-            # 执行count命令
-            count_cmd = [
-                "jellyfish", "count",
-                "-m", str(k),
-                "-s", hash_size,
-                "-t", str(threads),
-                "-C",
-                input_file,
-                "-o", count_file
-            ]
-            logger.debug(f"Running Jellyfish count command: {' '.join(count_cmd)}")
-            subprocess.run(count_cmd, check=True)
-            if not os.path.isfile(count_file):
-                raise RuntimeError(f"Jellyfish count output file not found: {count_file}")
+        if input_file.endswith(".gz"):
+            decompressed_input_file = os.path.join(temp_dir, os.path.basename(input_file[:-3]))
+            unzip_cmd = ["gunzip", "-c", input_file]
+            with open(decompressed_input_file, 'wb') as out_f:
+                logger.debug(f"Unzipping {input_file} to {decompressed_input_file}")
+                subprocess.run(unzip_cmd, stdout=out_f, check=True)
+        else:
+            decompressed_input_file = input_file
+
+        # 执行count命令
+        count_cmd = [
+            "jellyfish", "count",
+            "-m", str(k),
+            "-s", hash_size,
+            "-t", str(threads),
+            "-C",
+            decompressed_input_file,
+            "-o", count_file
+        ]
+        logger.debug(f"Running Jellyfish count command: {' '.join(count_cmd)}")
+        subprocess.run(count_cmd, check=True)
+        if not os.path.isfile(count_file):
+            raise RuntimeError(f"Jellyfish count output file not found: {count_file}")
+        # 执行dump命令并将结果保存到文件
+        dump_cmd = [
+            "jellyfish", "dump",
+            "-c",
+            "-L", str(min_multiplicity),
+            count_file
+        ]
+        with open(result_file, 'w') as f:
+            logger.debug(f"Running Jellyfish dump command: {' '.join(dump_cmd)}")
+            subprocess.run(dump_cmd, stdout=f, check=True)
             
-            # 执行dump命令并将结果保存到文件
-            dump_cmd = [
-                "jellyfish", "dump",
-                "-c",
-                "-L", str(min_multiplicity),
-                count_file
-            ]
-            with open(result_file, 'w') as f:
-                logger.debug(f"Running Jellyfish dump command: {' '.join(dump_cmd)}")
-                subprocess.run(dump_cmd, stdout=f, check=True)
-                
-            return True
-        except subprocess.CalledProcessError as e:
-            # 你可以在这里添加更详细的错误处理
-            raise RuntimeError(f"Jellyfish执行失败: {e}")
-        except Exception as e:
-            raise RuntimeError(f"执行过程中发生错误: {e}")
+        return True
+        
     
     # 使用线程池异步执行
     executor = ThreadPoolExecutor(max_workers=1)
