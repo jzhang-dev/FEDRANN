@@ -25,4 +25,4 @@ dependencies:
   - scikit-learn==1.5.0
   - scipy
   - bioconda::sharedmem
-  - xxhash
+  - python-xxhash==3.5.0
