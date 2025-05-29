@@ -1,5 +1,12 @@
 FROM continuumio/miniconda3:latest
 
+RUN apt-get update && apt-get install -y \
+    time \
+    tzdata \
+    && apt-get clean \
+    && apt-get purge \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
 COPY environment.yml /tmp/
 RUN conda env create -f /tmp/environment.yml --name default && \
     conda clean -afy
