@@ -16,4 +16,4 @@ scanpy == 1.10.1
 scikit-learn == 1.5.0
 scipy
 sharedmem
-python-xxhash == 3.5.0
+xxhash == 3.5.0
