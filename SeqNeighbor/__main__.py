@@ -9,21 +9,9 @@ from typing import (
     Tuple,
 )
 import gc
-from typing import (
-    Optional,
-    MutableMapping,
-    Any,
-    Mapping,
-    Sequence,
-    Literal,
-    List,
-    Tuple,
-)
-import gc
 import argparse
 from itertools import chain
 import os
-from os.path import join
 from os.path import join
 from math import floor, ceil
 from os.path import abspath, join, splitext
@@ -31,20 +19,9 @@ import scipy as sp
 import pandas as pd
 from scipy.sparse._csr import csr_matrix
 import json, pickle
-import pandas as pd
-from scipy.sparse._csr import csr_matrix
-import json, pickle
 import numpy as np
 from numpy.typing import NDArray
-from numpy.typing import NDArray
 import logging
-
-from . import __version__, __description__
-
-from .feature_extraction import (
-    get_feature_matrix,
-)
-from .preprocess import tf_transform, idf_transform
 
 from . import __version__, __description__
 
@@ -59,22 +36,11 @@ from .dim_reduction import (
     SparseRandomProjection,
     mp_SparseRandomProjection,
     scBiMapEmbedding,
-    mp_SparseRandomProjection,
-    scBiMapEmbedding,
 )
-from .nearest_neighbors import (
 from .nearest_neighbors import (
     ExactNearestNeighbors,
     NNDescent_ava,
-    NNDescent_ava,
     HNSW,
-)
-from . import globals
-from .custom_logging import logger
-
-
-logger.setLevel(logging.DEBUG)
-
 )
 from . import globals
 from .custom_logging import logger
@@ -101,19 +67,6 @@ def parse_command_line_arguments():
         type=str,
         required=True,
         help="Directory to save output files.",
-    parser.add_argument(
-        "-i",
-        "--input",
-        type=str,
-        required=True,
-        help="Path to the input FASTQ/FASTA file.",
-    )
-    parser.add_argument(
-        "-o",
-        "--output-dir",
-        type=str,
-        required=True,
-        help="Directory to save output files.",
     )
     parser.add_argument(
         "-p",
@@ -150,55 +103,7 @@ def parse_command_line_arguments():
         type=int,
         required=False,
         default=1,
-    parser.add_argument(
-        "-p",
-        "--preprocess",
-        type=str,
-        required=False,
-        default="IDF",
-        help="Preprocess method you want to implement to matrix.(TF/IDF/TF-IDF/None/count)",
     )
-    parser.add_argument(
-        "-k",
-        "--kmer-size",
-        type=int,
-        required=False,
-        default=16,
-        help="K-mer size for feature extraction.",
-    )
-    parser.add_argument(
-        "--kmer-sample-fraction",
-        type=float,
-        required=False,
-        default=0.005,
-        help="Percentage of k-mer used to build feature matrix.",
-    )
-    parser.add_argument(
-        "--kmer-min-multiplicity",
-        type=int,
-        required=False,
-        default=2,
-        help="Minimum allowed frequency of a k-mer in all reads.",
-    )
-    parser.add_argument(
-        "--threads",
-        type=int,
-        required=False,
-        default=1,
-    )
-    parser.add_argument(
-        "-d",
-        "--dimension-reduction",
-        type=str,
-        required=False,
-        default="SRP",
-        help="Dimension reduction method",
-    )
-    parser.add_argument(
-        "-n",
-        "--embedding-dimension",
-        type=int,
-        required=False,
     parser.add_argument(
         "-d",
         "--dimension-reduction",
@@ -224,26 +129,7 @@ def parse_command_line_arguments():
         "--neighbor-count",
         type=int,
         required=False,
-    )
-    parser.add_argument(
-        "--knn",
-        type=str,
-        required=False,
-        default="NNDescent",
-    )
-    parser.add_argument(
-        "--neighbor-count",
-        type=int,
-        required=False,
         default=20,
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        required=False,
-        default=356115,
-        help="Random seed for reproducibility.",
-    )
     )
     parser.add_argument(
         "--seed",
@@ -262,29 +148,13 @@ def get_feature_weights(feature_matrix: csr_matrix, method: str) -> csr_matrix:
     logger.debug(f"Applying preprocessing method {method!r} to feature matrix.")
 
     if method == "IDF":
-    return args
-
-
-def get_feature_weights(feature_matrix: csr_matrix, method: str) -> csr_matrix:
-    logger.debug(f"Applying preprocessing method {method!r} to feature matrix.")
-
-    if method == "IDF":
         feature_matrix[feature_matrix > 0] = 1
         feature_matrix, _ = idf_transform(feature_matrix)
     elif method == "TF-IDF":
         feature_matrix = tf_transform(feature_matrix)
         feature_matrix, _ = idf_transform(feature_matrix)
     elif method == "None":
-        feature_matrix, _ = idf_transform(feature_matrix)
-    elif method == "TF-IDF":
-        feature_matrix = tf_transform(feature_matrix)
-        feature_matrix, _ = idf_transform(feature_matrix)
-    elif method == "None":
         feature_matrix[feature_matrix > 0] = 1
-    elif method == "count":
-        pass
-    elif method == "TF":
-        feature_matrix = tf_transform(feature_matrix)
     elif method == "count":
         pass
     elif method == "TF":
@@ -294,24 +164,8 @@ def get_feature_weights(feature_matrix: csr_matrix, method: str) -> csr_matrix:
             f"Invalid preprocess method: {method}. Expected one of TF/IDF/TF-IDF/None/count."
         )
     return feature_matrix
-        raise ValueError(
-            f"Invalid preprocess method: {method}. Expected one of TF/IDF/TF-IDF/None/count."
-        )
-    return feature_matrix
 
 
-def compute_dimension_reduction(
-    feature_matrix: csr_matrix, embedding_dimension: int, method: str
-) -> NDArray:
-    if method.lower() == "srp":
-        logger.info("Using Sparse Random Projection for dimensionality reduction.")
-        seed = globals.seed + 5599
-        embeddings = mp_SparseRandomProjection().transform(
-            data=feature_matrix,
-            n_dimensions=embedding_dimension,
-            seed=seed,
-            threads=globals.threads,
-        )
 def compute_dimension_reduction(
     feature_matrix: csr_matrix, embedding_dimension: int, method: str
 ) -> NDArray:
@@ -350,72 +204,7 @@ def get_neighbors_ava(embedding_matrix: NDArray, method: str):
     elif method.lower() == "hnsw":
         logger.info("Using HNSW method to find nearest neighbors.")
         raise NotImplementedError()
-        raise ValueError(f"Unsupported dimension reduction method: {method}.")
-    logger.debug(f"Embedding matrix shape: {embeddings.shape}")
-    return embeddings
-
-
-def get_neighbors_ava(embedding_matrix: NDArray, method: str):
-    if method.lower() == "nndescent":
-        logger.info("Using NNDescent method to find nearest neighbors.")
-        neighbor_indices = NNDescent_ava().get_neighbors(
-            embedding_matrix,
-            metric="cosine",
-            n_neighbors=21,  # +1 for self-neighbor
-            index_n_neighbors=50,
-            n_trees=300,
-            leaf_size=200,
-            n_iters=None,
-            diversify_prob=1.0,
-            pruning_degree_multiplier=1.5,
-            low_memory=True,
-            n_jobs=globals.threads,
-            verbose=True,
-        )
-    elif method.lower() == "hnsw":
-        logger.info("Using HNSW method to find nearest neighbors.")
-        raise NotImplementedError()
     else:
-        raise ValueError(f"Invalid method: {method}. Expected 'nndescent' or 'hnsw'.")
-    return neighbor_indices
-
-
-def get_output_dataframe(
-    neighbor_matrix: NDArray,
-    read_names: List[str],
-    strands: list[int],
-) -> pd.DataFrame:
-    query_names = []
-    target_names = []
-    ranks = []
-    query_orientations = []
-    target_orientations = []
-
-    for query_index in range(0, neighbor_matrix.shape[0]):
-        query_name = read_names[query_index]
-        neighbors = neighbor_matrix[query_index]
-        query_orientation = ["+", "-"][strands[query_index]]
-        for rank, target_index in enumerate(neighbors):
-            if target_index == query_index:
-                continue
-            target_name = read_names[target_index]
-            target_orientation = ["+", "-"][strands[target_index]]
-            query_names.append(query_name)
-            query_orientations.append(query_orientation)
-            target_names.append(target_name)
-            target_orientations.append(target_orientation)
-            ranks.append(rank)
-
-    columns = {
-        "query_name": query_names,
-        "query_orientation": query_orientations,
-        "target_name": target_names,
-        "target_orientation": target_orientations,
-        "neighbor_rank": ranks,
-    }
-    df = pd.DataFrame(columns)
-    logger.debug(f"Output DataFrame shape: {df.shape}")
-    return df
         raise ValueError(f"Invalid method: {method}. Expected 'nndescent' or 'hnsw'.")
     return neighbor_indices
 
@@ -509,4 +298,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
