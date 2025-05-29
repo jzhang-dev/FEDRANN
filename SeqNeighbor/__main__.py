@@ -254,6 +254,7 @@ def main():
 
     output_dir = abspath(args.output_dir)
     os.makedirs(output_dir, exist_ok=True)
+    globals.output_dir = output_dir
 
     logger.info(f"SeqNeighbor version: {__version__}")
     logger.info(f"Input file: {args.input}")

@@ -1,5 +1,6 @@
 import gzip, json, collections, gc
 from typing import Sequence, Mapping, Collection, Optional, Iterable
+from os.path import join
 from multiprocessing import Pool
 from functools import partial
 from array import array
@@ -8,18 +9,17 @@ import scipy.sparse as sp
 from scipy.sparse import csr_matrix
 import numpy as np
 from numpy.typing import NDArray
-import pandas as pd
+import xxhash
+
 from .fastx_io import (
     FastqLoader,
     FastaLoader,
     get_reverse_complement_record,
     FastxRecord,
+    reverse_complement,
 )
-import time
-import xxhash
-from multiprocessing import Pool
-from functools import partial
-import gc
+from .count_kmers import run_jellyfish
+
 
 from . import globals
 from .custom_logging import logger
@@ -56,6 +56,9 @@ def load_reads(
             yield i0, batch
             i0 += len(batch)
             batch = []
+    yield i0, batch
+    i0 += len(batch)
+    logger.debug("Total records loaded: %d", i0)
 
 
 def _get_indices_by_min_count(x: NDArray, min_count: int = 2) -> NDArray:
@@ -70,24 +73,35 @@ def _get_indices_by_min_count(x: NDArray, min_count: int = 2) -> NDArray:
     return matching_indices
 
 
-def _process_batch(batch, k: int, seed: int, max_hash: int) -> tuple:
+def get_hash_value(kmer: str, seed: int) -> int:
+    return xxhash.xxh3_64(kmer, seed=seed).intdigest()
+
+
+def _process_batch(
+    batch, k: int, seed: int, selected_hash_values: Collection[int]
+) -> tuple:
     i0, records = batch
+    if len(records) == 0:
+        raise ValueError("Empty batch received")
+
     indices = array("L", [])
     hash_values = array("Q", [])
     multiplicity_values = array("H", [])
     max_multiplicity = 2**16 - 1
+    selected_hash_values = set(int(x) for x in selected_hash_values)
+    if len(selected_hash_values) == 0:
+        raise ValueError("Zero selected k-mers provided")
 
     for i, record in enumerate(records):
         if len(record.sequence) < k:
             raise ValueError()
 
         counts = collections.Counter()
-        kmers = (
-            record.sequence[p : p + k] for p in range(len(record.sequence) - k + 1)
-        )
+        sequence = record.sequence
+        kmers = (sequence[p : p + k] for p in range(len(sequence) - k + 1))
         for kmer in kmers:
-            hash_value = xxhash.xxh3_64(kmer, seed=seed).intdigest()
-            if hash_value < max_hash:
+            hash_value = get_hash_value(kmer, seed=seed)
+            if hash_value in selected_hash_values:
                 counts[hash_value] += 1
 
         counts = {
@@ -108,18 +122,42 @@ def get_feature_matrix(
     k: int,
     sample_fraction: float,
     min_multiplicity: int = 2,
-    batch_size: int = 10_000,
+    batch_size: int = 50_000,
 ):
     threads = globals.threads
     seed = globals.seed + 578
 
-    max_hash = int(2**64 - 1 * sample_fraction)
-    loader = load_reads(input_path, batch_size=batch_size)
+    logger.debug("Counting k-mers with Jellyfish")
+    jellyfish_result = run_jellyfish(
+        input_file=input_path,
+        k=k,
+        threads=threads,
+        min_multiplicity=min_multiplicity,
+        temp_dir=join(globals.output_dir, "jellyfish_temp"),
+    )
 
     logger.debug("Loading reads")
+    loader = load_reads(input_path, batch_size=batch_size)
     batches: dict[int, tuple[int, list[FastxRecord]] | None] = {
         i0: (i0, records) for i0, records in loader
     }
+
+    logger.debug("Sampling k-mers")
+    rng = np.random.default_rng(seed=seed + 23)
+    selected_kmers = [
+        kmer
+        for kmer, _ in jellyfish_result.get_result()
+        if rng.random() < sample_fraction
+    ]
+    jellyfish_result.cleanup()
+    reverse_complement_kmers = [reverse_complement(kmer) for kmer in selected_kmers]
+    selected_kmers.extend(reverse_complement_kmers)
+    del reverse_complement_kmers
+    selected_hash_values = array(
+        "Q", set(get_hash_value(kmer, seed=seed) for kmer in selected_kmers)
+    )
+    del selected_kmers
+    logger.debug(f"Sampled {len(selected_hash_values)} k-mers")
 
     row_indices, col_indices, data = array("L", []), array("Q", []), array("H", [])
     read_names, strands = [], []
@@ -146,31 +184,51 @@ def get_feature_matrix(
         logger.debug("Progress: %.2f%%", fished_batches / len(batches) * 100)
 
     logger.debug(f"Extracting k-mers from reads ({threads=} {batch_size=})")
-    with Pool(threads, maxtasksperchild=1000) as pool:
-        work = partial(_process_batch, k=k, seed=seed, max_hash=max_hash)
+    with Pool(threads, maxtasksperchild=100) as pool:
+        work = partial(
+            _process_batch, k=k, seed=seed, selected_hash_values=selected_hash_values
+        )
         for result in pool.imap_unordered(work, batches.values()):
             callback(*result)
 
-    row_indices_numpy = np.frombuffer(row_indices, dtype=np.uint32)
-    col_indices_numpy = np.frombuffer(col_indices, dtype=np.uint64)
-    data_numpy = np.frombuffer(data, dtype=np.uint16)
+    if len(data) == 0:
+        raise ValueError("No selected k-mers found in the input file.")
+    if len(row_indices) != len(col_indices) or len(row_indices) != len(data):
+        raise ValueError(
+            f"{len(row_indices)=}, {len(col_indices)=}, {len(data)=} mismatch"
+        )
+    row_indices_numpy = np.array(row_indices, dtype=np.uint32)
+    col_indices_numpy = np.array(col_indices, dtype=np.uint64)
+    data_numpy = np.array(data, dtype=np.uint16)
+    if len(row_indices_numpy) != len(col_indices_numpy) or len(
+        row_indices_numpy
+    ) != len(data_numpy):
+        raise ValueError(
+            f"{len(row_indices_numpy)=}, {len(col_indices_numpy)=}, {len(data_numpy)=} mismatch"
+        )
     del row_indices, col_indices, data
     gc.collect()
 
-    # Filter out indices with multiplicity < min_multiplicity
-    logger.debug("Filtering k-mers by minimum multiplicity")
-    filtered_indices = _get_indices_by_min_count(
-        col_indices_numpy, min_count=min_multiplicity
-    )
-    row_indices_numpy = row_indices_numpy[filtered_indices]
-    col_indices_numpy = col_indices_numpy[filtered_indices]
-    data_numpy = data_numpy[filtered_indices]
-    del filtered_indices
-    gc.collect()
+    # # Filter out indices with multiplicity < min_multiplicity
+    # logger.debug("Filtering k-mers by minimum multiplicity")
+    # filtered_indices = _get_indices_by_min_count(
+    #     col_indices_numpy, min_count=min_multiplicity
+    # )
+    # row_indices_numpy = row_indices_numpy[filtered_indices]
+    # col_indices_numpy = col_indices_numpy[filtered_indices]
+    # data_numpy = data_numpy[filtered_indices]
+    # del filtered_indices
+    # gc.collect()
 
     # Remove empty columns
     logger.debug("Removing empty columns")
     _, col_indices_numpy = np.unique(col_indices_numpy, return_inverse=True)
+    if len(row_indices_numpy) != len(col_indices_numpy) or len(
+        row_indices_numpy
+    ) != len(data_numpy):
+        raise ValueError(
+            f"{len(row_indices_numpy)=}, {len(col_indices_numpy)=}, {len(data_numpy)=} mismatch"
+        )
 
     # Create sparse matrix
     logger.debug("Creating sparse feature matrix")

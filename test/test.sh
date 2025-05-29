@@ -6,7 +6,7 @@ rm -rf test/output/
 mkdir -p test/output/
 
 ./entrypoint.sh \
-    -i test/data/reads.fasta.gz \
+    -i test/data/reads.fasta \
     -o test/output/ \
     -k 15 \
     --kmer-sample-fraction 0.05 \
