@@ -1,28 +1,10 @@
-FROM ubuntu:24.10
+FROM continuumio/miniconda3:latest
 
-USER root
-RUN apt-get update && apt-get install -y \
-    curl \
-    jellyfish \
-    python3 \
-    python3-pip \
-    python3-venv \
-    time \
-    tzdata \
-    unzip \
-    && apt-get clean \
-    && apt-get purge \
-    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
-
-COPY requirements.txt /tmp/
-RUN python3 -m venv /opt/venv \
-    && /opt/venv/bin/pip install --upgrade pip \
-    && /opt/venv/bin/pip install --no-cache-dir --upgrade -r /tmp/requirements.txt
-
-# 后续所有命令都用虚拟环境
-ENV PATH="/opt/venv/bin:$PATH"
-
-
+COPY environment.yml /tmp/
+RUN conda env create -f /tmp/environment.yml --name default && \
+    conda clean -afy
+RUN conda init bash
+ENV PATH=/opt/conda/envs/default/bin:$PATH
 
 # 安装 SeqNeighbor
 WORKDIR /app
