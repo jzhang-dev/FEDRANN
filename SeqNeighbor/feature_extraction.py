@@ -72,6 +72,18 @@ def _get_indices_by_min_count(x: NDArray, min_count: int = 2) -> NDArray:
     matching_indices = np.isin(inverse, target_value_indices).nonzero()[0]
     return matching_indices
 
+def _get_matrix_density(matrix: csr_matrix) -> float:
+    """
+    Calculate the density of a sparse matrix.
+    Density is defined as the ratio of non-zero elements to the total number of elements.
+    """
+    if not isinstance(matrix, csr_matrix):
+        raise TypeError("Input must be a csr_matrix")
+    assert matrix.shape is not None, "Matrix shape must be defined"
+    if matrix.shape[0] == 0 or matrix.shape[1] == 0:
+        return 0.0
+    return matrix.nnz / (matrix.shape[0] * matrix.shape[1])
+
 
 def get_hash_value(kmer: str, seed: int) -> int:
     return xxhash.xxh3_64(kmer, seed=seed).intdigest()
@@ -144,7 +156,6 @@ def get_feature_matrix(
         for kmer in jellyfish_result.get_result()
         if rng.random() < sample_fraction
     ]
-    jellyfish_result.cleanup()
     reverse_complement_kmers = [reverse_complement(kmer) for kmer in selected_kmers]
     selected_kmers.extend(reverse_complement_kmers)
     del reverse_complement_kmers
@@ -233,5 +244,5 @@ def get_feature_matrix(
         dtype=np.uint32,
     )
 
-    logger.debug(f"{feature_matrix.shape=}, {len(feature_matrix.data)=}, {feature_matrix.dtype=}")
+    logger.debug(f"{feature_matrix.shape=}, {len(feature_matrix.data)=}, density={_get_matrix_density(feature_matrix):.6f}")
     return feature_matrix, read_names, strands
