@@ -49,6 +49,7 @@ def load_reads(
             "Unsupported file format. Please provide a FASTA or FASTQ file."
         )
     i0 = 0
+    batch_count = 0
     batch = []
     for record in loader:  # 迭代获取每条序列
         batch.append(record)
@@ -57,9 +58,10 @@ def load_reads(
             yield i0, batch
             i0 += len(batch)
             batch = []
+            batch_count += 1
     yield i0, batch
     i0 += len(batch)
-    logger.debug("Total records loaded: %d", i0)
+    logger.debug(f"Loaded {i0} records from {file_path} ({batch_count=} batches)")
 
 
 @njit
@@ -156,7 +158,7 @@ def get_feature_matrix(
     k: int,
     sample_fraction: float,
     min_multiplicity: int = 2,
-    batch_size: int = 50_000,
+    batch_size: int = 10000,
 ):
     threads = globals.threads
     seed = globals.seed + 578
