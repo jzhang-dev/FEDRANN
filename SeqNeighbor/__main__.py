@@ -185,21 +185,22 @@ def compute_dimension_reduction(
     return embeddings
 
 
-def get_neighbors_ava(embedding_matrix: NDArray, method: str):
+def get_neighbors_ava(embedding_matrix: NDArray, method: str, neighbor_count: int = 20) -> NDArray:
     if method.lower() == "nndescent":
         logger.info("Using NNDescent method to find nearest neighbors.")
         neighbor_indices = NNDescent_ava().get_neighbors(
             embedding_matrix,
             metric="cosine",
-            n_neighbors=21,  # +1 for self-neighbor
+            n_neighbors=neighbor_count + 1,  # +1 to include self in the neighbors
             index_n_neighbors=50,
-            n_trees=300,
+            n_trees=600,
             leaf_size=200,
             n_iters=None,
             diversify_prob=1.0,
             pruning_degree_multiplier=1.5,
             low_memory=True,
             n_jobs=globals.threads,
+            seed=globals.seed,
             verbose=True,
         )
     elif method.lower() == "hnsw":
@@ -284,6 +285,7 @@ def main():
     neighbor_matrix = get_neighbors_ava(
         embedding_matrix,
         method=args.knn,
+        neighbor_count=args.neighbor_count,
     )
     del embedding_matrix
     gc.collect()
