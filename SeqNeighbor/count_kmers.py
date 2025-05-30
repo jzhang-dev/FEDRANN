@@ -26,6 +26,7 @@ class AsyncJellyfishResult:
         if not self.done():
             self._future.result()  # 等待任务完成
         assert self.done()
+        logger.debug("Jellyfish task completed, reading results from %s", self._result_file)
 
         # 读取结果文件
         with open(self._result_file, 'r') as f:
@@ -38,6 +39,7 @@ class AsyncJellyfishResult:
     def cleanup(self):
         """清理临时文件"""
         if os.path.exists(self._temp_dir):
+            logger.debug("Cleaning up temporary directory: %s", self._temp_dir)
             shutil.rmtree(self._temp_dir)
 
 def run_jellyfish(

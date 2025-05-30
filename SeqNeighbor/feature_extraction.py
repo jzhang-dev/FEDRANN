@@ -156,12 +156,14 @@ def get_feature_matrix(
         for kmer in jellyfish_result.get_result()
         if rng.random() < sample_fraction
     ]
+    logger.debug(f"Sampled {len(selected_kmers)} k-mers")
+    logger.debug("Computing reverse complements for selected k-mers")
     reverse_complement_kmers = [reverse_complement(kmer) for kmer in selected_kmers]
     selected_kmers.extend(reverse_complement_kmers)
     del reverse_complement_kmers
+    logger.debug("Computing hash values for selected k-mers")
     selected_hash_values: set[int] = set(get_hash_value(kmer, seed=seed) for kmer in selected_kmers)
     del selected_kmers
-    logger.debug(f"Sampled {len(selected_hash_values)} k-mers")
 
     row_indices, col_indices, data = array("L", []), array("Q", []), array("L", [])
     read_names, strands = [], []
