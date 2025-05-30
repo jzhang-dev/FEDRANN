@@ -141,7 +141,7 @@ def get_feature_matrix(
     rng = np.random.default_rng(seed=seed + 23)
     selected_kmers = [
         kmer
-        for kmer, _ in jellyfish_result.get_result()
+        for kmer in jellyfish_result.get_result()
         if rng.random() < sample_fraction
     ]
     jellyfish_result.cleanup()
