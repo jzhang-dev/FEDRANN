@@ -3,6 +3,7 @@ import numpy as np
 
 
 def tf_transform(feature_matrix: csr_matrix):
+    feature_matrix = feature_matrix.astype(np.float32)
     row_sums = feature_matrix.sum(axis=1).A1
     feature_matrix /= row_sums
     return feature_matrix

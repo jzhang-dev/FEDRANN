@@ -1,7 +1,7 @@
 import gzip, json, collections, gc
 from typing import Sequence, Mapping, Collection, Optional, Iterable
 from os.path import join
-from multiprocessing import Pool
+from multiprocessing import Pool, set_start_method
 from functools import partial
 from array import array
 from Bio import SeqIO
@@ -78,7 +78,7 @@ def get_hash_value(kmer: str, seed: int) -> int:
 
 
 def _process_batch(
-    batch, k: int, seed: int, selected_hash_values: Collection[int]
+    batch, k: int, seed: int, selected_hash_values: set[int]
 ) -> tuple:
     i0, records = batch
     if len(records) == 0:
@@ -86,9 +86,8 @@ def _process_batch(
 
     indices = array("L", [])
     hash_values = array("Q", [])
-    multiplicity_values = array("H", [])
-    max_multiplicity = 2**16 - 1
-    selected_hash_values = set(int(x) for x in selected_hash_values)
+    multiplicity_values = array("L", [])
+
     if len(selected_hash_values) == 0:
         raise ValueError("Zero selected k-mers provided")
 
@@ -104,10 +103,6 @@ def _process_batch(
             if hash_value in selected_hash_values:
                 counts[hash_value] += 1
 
-        counts = {
-            hash_value: min(multiplicity, max_multiplicity)
-            for hash_value, multiplicity in counts.items()
-        }
         indices.extend([i0 + i] * len(counts))
         hash_values.extend(counts.keys())
         multiplicity_values.extend(counts.values())
@@ -153,13 +148,11 @@ def get_feature_matrix(
     reverse_complement_kmers = [reverse_complement(kmer) for kmer in selected_kmers]
     selected_kmers.extend(reverse_complement_kmers)
     del reverse_complement_kmers
-    selected_hash_values = array(
-        "Q", set(get_hash_value(kmer, seed=seed) for kmer in selected_kmers)
-    )
+    selected_hash_values: set[int] = set(get_hash_value(kmer, seed=seed) for kmer in selected_kmers)
     del selected_kmers
     logger.debug(f"Sampled {len(selected_hash_values)} k-mers")
 
-    row_indices, col_indices, data = array("L", []), array("Q", []), array("H", [])
+    row_indices, col_indices, data = array("L", []), array("Q", []), array("L", [])
     read_names, strands = [], []
     fished_batches = 0
 
@@ -237,8 +230,8 @@ def get_feature_matrix(
     feature_matrix = csr_matrix(
         (data_numpy, (row_indices_numpy, col_indices_numpy)),
         shape=(n_rows, n_cols),
-        dtype=np.uint16,
+        dtype=np.uint32,
     )
 
-    logger.debug("Feature matrix shape: %s", feature_matrix.shape)
+    logger.debug(f"{feature_matrix.shape=}, {len(feature_matrix.data)=}, {feature_matrix.dtype=}")
     return feature_matrix, read_names, strands

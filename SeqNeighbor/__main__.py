@@ -8,6 +8,7 @@ from typing import (
     List,
     Tuple,
 )
+import multiprocessing
 import gc
 import argparse
 from itertools import chain
@@ -297,4 +298,5 @@ def main():
 
 
 if __name__ == "__main__":
+    multiprocessing.set_start_method('fork') 
     main()
