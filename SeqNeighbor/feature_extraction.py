@@ -1,7 +1,7 @@
 import gzip, json, collections, gc
 from typing import Sequence, Mapping, Collection, Optional, Iterable
 from os.path import join
-from multiprocessing import Pool, set_start_method
+from multiprocessing import Pool, shared_memory
 from functools import partial
 from array import array
 from Bio import SeqIO
@@ -10,6 +10,7 @@ from scipy.sparse import csr_matrix
 import numpy as np
 from numpy.typing import NDArray
 import xxhash
+from numba import njit
 
 from .fastx_io import (
     FastqLoader,
@@ -61,16 +62,43 @@ def load_reads(
     logger.debug("Total records loaded: %d", i0)
 
 
-def _get_indices_by_min_count(x: NDArray, min_count: int = 2) -> NDArray:
-    uniq_vals, inverse, counts = np.unique(x, return_inverse=True, return_counts=True)
+@njit
+def get_common_values(
+    target: NDArray[np.uint64], query: NDArray[np.uint64]
+) -> NDArray[np.uint64]:
+    """
+    Numba优化的双指针法查找共有值
 
-    # 找出出现次数>=2的值的索引（在uniq_vals中的索引）
-    mask = counts >= min_count
-    target_value_indices = np.where(mask)[0]  # 例如 [2, 3] 对应值为 3 和 4
+    参数:
+        target: 已排序的一维numpy数组
+        query: 已排序的一维numpy数组
 
-    # 在原数组中查找这些值的索引
-    matching_indices = np.isin(inverse, target_value_indices).nonzero()[0]
-    return matching_indices
+    返回:
+        包含两个数组共有值的numpy数组
+    """
+    # 初始化结果数组
+    result = np.empty_like(query)
+    count = 0
+
+    t_ptr, q_ptr = 0, 0
+    len_target, len_query = len(target), len(query)
+
+    while t_ptr < len_target and q_ptr < len_query:
+        t_val = target[t_ptr]
+        q_val = query[q_ptr]
+
+        if t_val == q_val:
+            result[count] = t_val
+            count += 1
+            t_ptr += 1
+            q_ptr += 1
+        elif t_val < q_val:
+            t_ptr += 1
+        else:
+            q_ptr += 1
+
+    return result[:count]
+
 
 def _get_matrix_density(matrix: csr_matrix) -> float:
     """
@@ -89,9 +117,7 @@ def get_hash_value(kmer: str, seed: int) -> int:
     return xxhash.xxh3_64(kmer, seed=seed).intdigest()
 
 
-def _process_batch(
-    batch, k: int, seed: int, selected_hash_values: set[int]
-) -> tuple:
+def _process_batch(batch, k: int, seed: int, shm_name: str, shm_shape) -> tuple:
     i0, records = batch
     if len(records) == 0:
         raise ValueError("Empty batch received")
@@ -100,25 +126,26 @@ def _process_batch(
     hash_values = array("Q", [])
     multiplicity_values = array("L", [])
 
+    shm = shared_memory.SharedMemory(name=shm_name)
+    selected_hash_values = np.ndarray(shape=shm_shape, dtype=np.uint64, buffer=shm.buf)
     if len(selected_hash_values) == 0:
         raise ValueError("Zero selected k-mers provided")
 
     for i, record in enumerate(records):
         if len(record.sequence) < k:
             raise ValueError()
-
-        counts = collections.Counter()
         sequence = record.sequence
-        kmers = (sequence[p : p + k] for p in range(len(sequence) - k + 1))
-        for kmer in kmers:
-            hash_value = get_hash_value(kmer, seed=seed)
-            if hash_value in selected_hash_values:
-                counts[hash_value] += 1
+        record_kmers = (sequence[p : p + k] for p in range(len(sequence) - k + 1))
+        record_hash_values = [get_hash_value(kmer, seed=seed) for kmer in record_kmers]
+        counts = collections.Counter(record_hash_values)
+        unique_hashes = np.array(list(counts.keys()), dtype=np.uint64)
+        unique_hashes.sort()
+        common_hashes = get_common_values(selected_hash_values, unique_hashes)
+        indices.extend([i0 + i] * len(common_hashes))
+        hash_values.extend(common_hashes)
+        multiplicity_values.extend(counts[h] for h in common_hashes)
 
-        indices.extend([i0 + i] * len(counts))
-        hash_values.extend(counts.keys())
-        multiplicity_values.extend(counts.values())
-
+    shm.close()
     read_names = [record.name for record in records]
     strands = [record.orientation for record in records]
     return i0, indices, hash_values, multiplicity_values, read_names, strands
@@ -152,9 +179,7 @@ def get_feature_matrix(
     logger.debug("Sampling k-mers")
     rng = np.random.default_rng(seed=seed + 23)
     selected_kmers = [
-        kmer
-        for kmer in jellyfish_result.get_result()
-        if rng.random() < sample_fraction
+        kmer for kmer in jellyfish_result.get_result() if rng.random() < sample_fraction
     ]
     logger.debug(f"Sampled {len(selected_kmers)} k-mers")
     logger.debug("Computing reverse complements for selected k-mers")
@@ -162,9 +187,26 @@ def get_feature_matrix(
     selected_kmers.extend(reverse_complement_kmers)
     del reverse_complement_kmers
     logger.debug("Computing hash values for selected k-mers")
-    selected_hash_values: set[int] = set(get_hash_value(kmer, seed=seed) for kmer in selected_kmers)
+    selected_hash_values = np.array(
+        [get_hash_value(kmer, seed=seed) for kmer in selected_kmers], dtype=np.uint64
+    )
     del selected_kmers
+    logger.debug("Sorting hash values")
+    selected_hash_values.sort()
 
+    logger.debug(f"Creating shared memory for selected hash values")
+    shm = shared_memory.SharedMemory(create=True, size=selected_hash_values.nbytes)
+    shm_array = np.ndarray(
+        selected_hash_values.shape,
+        dtype=selected_hash_values.dtype,
+        buffer=shm.buf,
+    )
+    shm_shape = selected_hash_values.shape
+    np.copyto(shm_array, selected_hash_values)
+    del selected_hash_values
+    gc.collect()
+
+    logger.debug(f"Extracting k-mers from reads ({threads=} {batch_size=})")
     row_indices, col_indices, data = array("L", []), array("Q", []), array("L", [])
     read_names, strands = [], []
     fished_batches = 0
@@ -189,13 +231,14 @@ def get_feature_matrix(
         fished_batches += 1
         logger.debug("Progress: %.2f%%", fished_batches / len(batches) * 100)
 
-    logger.debug(f"Extracting k-mers from reads ({threads=} {batch_size=})")
     with Pool(threads, maxtasksperchild=100) as pool:
         work = partial(
-            _process_batch, k=k, seed=seed, selected_hash_values=selected_hash_values
+            _process_batch, k=k, seed=seed, shm_name=shm.name, shm_shape=shm_shape
         )
         for result in pool.imap_unordered(work, batches.values()):
             callback(*result)
+    shm.close()
+    shm.unlink()
 
     if len(data) == 0:
         raise ValueError("No selected k-mers found in the input file.")
@@ -246,5 +289,7 @@ def get_feature_matrix(
         dtype=np.uint32,
     )
 
-    logger.debug(f"{feature_matrix.shape=}, {len(feature_matrix.data)=}, density={_get_matrix_density(feature_matrix):.6f}")
+    logger.debug(
+        f"{feature_matrix.shape=}, {len(feature_matrix.data)=}, density={_get_matrix_density(feature_matrix):.6f}"
+    )
     return feature_matrix, read_names, strands

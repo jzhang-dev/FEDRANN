@@ -13,6 +13,7 @@ dependencies:
   - nbconvert
   - nltk
   - notebook
+  - numba
   - numpy==1.26.4
   - pandas
   - pygraphviz
