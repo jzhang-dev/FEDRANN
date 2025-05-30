@@ -127,6 +127,12 @@ def parse_command_line_arguments():
         default="NNDescent",
     )
     parser.add_argument(
+        "--nndescent-n-trees",
+        type=int,
+        default=300,
+        help="Number of trees to use in NNDescent.",
+    )
+    parser.add_argument(
         "--neighbor-count",
         type=int,
         required=False,
@@ -185,16 +191,18 @@ def compute_dimension_reduction(
     return embeddings
 
 
-def get_neighbors_ava(embedding_matrix: NDArray, method: str, neighbor_count: int = 20) -> NDArray:
+def get_neighbors_ava(
+    embedding_matrix: NDArray, method: str, neighbor_count: int, nndescent_n_trees: int, leaf_size: int = 200
+) -> NDArray:
     if method.lower() == "nndescent":
-        logger.info("Using NNDescent method to find nearest neighbors.")
+        logger.info("Using NNDescent method to find nearest neighbors. (n_trees = {nndescent_n_trees}, left_size = {leaf_size})")
         neighbor_indices = NNDescent_ava().get_neighbors(
             embedding_matrix,
             metric="cosine",
             n_neighbors=neighbor_count + 1,  # +1 to include self in the neighbors
             index_n_neighbors=50,
-            n_trees=600,
-            leaf_size=200,
+            n_trees=nndescent_n_trees,
+            leaf_size=leaf_size,
             n_iters=None,
             diversify_prob=1.0,
             pruning_degree_multiplier=1.5,
@@ -286,6 +294,7 @@ def main():
         embedding_matrix,
         method=args.knn,
         neighbor_count=args.neighbor_count,
+        nndescent_n_trees=args.nndescent_n_trees,
     )
     del embedding_matrix
     gc.collect()
@@ -300,5 +309,5 @@ def main():
 
 
 if __name__ == "__main__":
-    multiprocessing.set_start_method('spawn')
+    multiprocessing.set_start_method("spawn")
     main()
