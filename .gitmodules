@@ -1,0 +1,3 @@
+[submodule "external/kmer_searcher"]
+	path = external/kmer_searcher
+	url = git@github.com:CycloneSEQ-Bioinformatics/kmer_searcher.git
