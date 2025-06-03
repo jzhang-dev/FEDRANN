@@ -27,7 +27,7 @@ import logging
 from . import __version__, __description__
 
 from .feature_extraction import (
-    get_feature_matrix,
+    get_feature_matrix_1,
 )
 from .preprocess import tf_transform, idf_transform
 from .dim_reduction import (
@@ -195,7 +195,7 @@ def get_neighbors_ava(
     embedding_matrix: NDArray, method: str, neighbor_count: int, nndescent_n_trees: int, leaf_size: int = 200
 ) -> NDArray:
     if method.lower() == "nndescent":
-        logger.info("Using NNDescent method to find nearest neighbors. (n_trees = {nndescent_n_trees}, left_size = {leaf_size})")
+        logger.info(f"Using NNDescent method to find nearest neighbors (n_trees = {nndescent_n_trees}, left_size = {leaf_size})")
         neighbor_indices = NNDescent_ava().get_neighbors(
             embedding_matrix,
             metric="cosine",
@@ -266,12 +266,16 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     globals.output_dir = output_dir
 
+    temp_dir = join(output_dir, "temp")
+    os.makedirs(temp_dir, exist_ok=True)
+    globals.temp_dir = temp_dir
+
     logger.info(f"SeqNeighbor version: {__version__}")
     logger.info(f"Input file: {args.input}")
     logger.info(f"Output directory: {output_dir}")
 
     logger.info("Starting feature extraction")
-    feature_matrix, read_names, strands = get_feature_matrix(
+    feature_matrix, read_names, strands = get_feature_matrix_1(
         input_path=args.input,
         k=args.kmer_size,
         sample_fraction=args.kmer_sample_fraction,

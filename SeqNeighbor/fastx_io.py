@@ -27,6 +27,9 @@ from dataclasses import dataclass, field
 from isal import igzip
 import numpy as np
 from numpy.typing import NDArray
+import pysam
+
+from .custom_logging import logger
 
 
 T = TypeVar("T")
@@ -176,3 +179,64 @@ class FastaLoader(_DataLoader[FastxRecord]):
         with open_gzipped(self.file_path, "rt") as f:
             for item in self._read_item(f):
                 yield self._parse_item(item)
+
+
+
+def convert_fastq_to_fasta(fastq_path: str, fasta_path: str) -> None:
+    """
+    Convert a FASTQ file to a FASTA file.
+    """
+    seqkit_command = [
+        "seqkit", "seq",
+        "-f",  # FASTA output
+        fastq_path,
+        "-o", fasta_path
+    ]
+    logger.debug(f"Running seqkit command: {' '.join(seqkit_command)}")
+    subprocess.run(seqkit_command, check=True)
+    if not isfile(fasta_path):
+        raise RuntimeError(f"Failed to convert FASTQ to FASTA: {fasta_path} not found after conversion.")
+    
+
+def unzip(input_path: str, output_path: str) -> None:
+    """
+    Unzip a gzipped file.
+    """
+    if not input_path.endswith(".gz"):
+        raise ValueError(f"Input path {input_path} is not a gzipped file.")
+    
+    logger.debug(f"Unzipping {input_path} to {output_path}")
+    gunzip_command = ["gunzip", "-c", input_path]
+    with open(output_path, "wb") as out_f:
+        subprocess.run(gunzip_command, stdout=out_f, check=True)
+    if not isfile(output_path):
+        raise RuntimeError(f"Failed to unzip {input_path}: {output_path} not found after unzipping.")
+    
+
+def make_fasta_index(file_path: str, index_path: Optional[str] = None) -> None:
+    """
+    创建 FASTA 文件的索引。
+    
+    参数：
+        file_path: FASTA 文件路径
+        index_path: 索引文件路径，默认为 file_path + ".fai"
+    
+    异常：
+        如果索引文件已存在，则抛出 FileExistsError
+    """
+    # TODO: 处理压缩文件
+    if index_path is None:
+        index_path = file_path + ".fai"
+    else:
+        parent_dir = os.path.dirname(index_path)
+        symlink_path = os.path.join(parent_dir, "input.fasta")
+        os.system(f"ln -s {file_path} {symlink_path}")
+        file_path = symlink_path
+    if isfile(index_path):
+        raise FileExistsError(f"Index file already exists: {index_path!r}")
+    logger.debug(f"Creating index for {file_path!r} at {index_path!r}")
+    pysam.faidx(file_path)
+    if index_path != file_path + ".fai":
+        os.rename(file_path + ".fai", index_path)
+    if not isfile(index_path):
+        raise RuntimeError(f"Failed to create index file: {index_path!r}")

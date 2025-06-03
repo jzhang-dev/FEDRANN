@@ -10,6 +10,7 @@ nltk
 numba
 numpy == 1.26.4
 pandas
+pyahocorasick
 pynndescent == 0.5.12
 pysam == 0.22.1
 requests

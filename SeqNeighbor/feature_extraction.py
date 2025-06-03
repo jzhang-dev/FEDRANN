@@ -1,4 +1,4 @@
-import gzip, json, collections, gc
+import gzip, json, collections, gc, os
 from typing import Sequence, Mapping, Collection, Optional, Iterable
 from os.path import join
 from multiprocessing import Pool, shared_memory
@@ -11,6 +11,8 @@ import numpy as np
 from numpy.typing import NDArray
 import xxhash
 from numba import njit
+import ahocorasick
+import sharedmem
 
 from .fastx_io import (
     FastqLoader,
@@ -18,8 +20,11 @@ from .fastx_io import (
     get_reverse_complement_record,
     FastxRecord,
     reverse_complement,
+    unzip,
+    convert_fastq_to_fasta,
+    make_fasta_index,
 )
-from .count_kmers import run_jellyfish
+from .count_kmers import run_jellyfish, get_kmer_features
 
 
 from . import globals
@@ -135,7 +140,9 @@ def _process_batch(batch, k: int, seed: int, shm_name: str, shm_shape) -> tuple:
 
     for i, record in enumerate(records):
         if len(record.sequence) < k:
-            raise ValueError()
+            raise ValueError(
+                f"Record sequence length is less than k: {record.name=} {len(record.sequence)=}"
+            )
         sequence = record.sequence
         record_kmers = (sequence[p : p + k] for p in range(len(sequence) - k + 1))
         record_hash_values = [get_hash_value(kmer, seed=seed) for kmer in record_kmers]
@@ -153,13 +160,85 @@ def _process_batch(batch, k: int, seed: int, shm_name: str, shm_shape) -> tuple:
     return i0, indices, hash_values, multiplicity_values, read_names, strands
 
 
-def get_feature_matrix(
+def get_feature_matrix_1(
+    input_path: str,
+    k: int,
+    sample_fraction: float,
+    min_multiplicity: int = 2,
+):
+
+    # Unzip
+    if input_path.endswith(".gz"):
+        input_unzipped_path = join(globals.temp_dir, os.path.basename(input_path[:-3]))
+        unzip(input_path, input_unzipped_path)
+    else:
+        input_unzipped_path = input_path
+
+    # Convert FASTQ to FASTA
+    if input_unzipped_path.endswith(".fastq") or input_unzipped_path.endswith(".fq"):
+        input_fasta_path = join(globals.temp_dir, "input.fasta")
+        convert_fastq_to_fasta(input_unzipped_path, input_fasta_path)
+    elif input_unzipped_path.endswith(".fasta") or input_unzipped_path.endswith(".fa"):
+        input_fasta_path = input_unzipped_path
+    else:
+        raise ValueError(
+            "Unsupported file format. Please provide a FASTA or FASTQ file."
+        )
+
+    # Get features
+    row_indices = []
+    col_indices = []
+    data = []
+    read_names = []
+    strands = []
+    for i, (name, indices, counts, strand) in enumerate(
+        get_kmer_features(
+            input_fasta_path,
+            k=k,
+            sample_fraction=sample_fraction,
+            min_multiplicity=min_multiplicity,
+        )
+    ):
+        row_indices.extend([i] * len(indices))
+        col_indices.extend(indices)
+        data.extend(counts)
+        read_names.append(name)
+        strands.append(strand)
+
+    # Create sparse matrix
+    logger.debug("Creating sparse feature matrix")
+    n_rows = max(row_indices) + 1
+    n_cols = max(col_indices) + 1
+    feature_matrix = csr_matrix(
+        (data, (row_indices, col_indices)),
+        shape=(n_rows, n_cols),
+        dtype=np.uint32,
+    )
+
+    logger.debug(
+        f"{feature_matrix.shape=}, {len(feature_matrix.data)=}, density={_get_matrix_density(feature_matrix):.6f}"
+    )
+
+    return feature_matrix, read_names, strands
+
+
+def _build_automaton(kmers: Sequence[str]) -> ahocorasick.Automaton:
+    # Function to build the Aho-Corasick automaton
+    A = ahocorasick.Automaton()
+    for i, kmer in enumerate(kmers):
+        A.add_word(kmer, i)
+    A.make_automaton()
+    return A
+
+
+def get_feature_matrix_2(
     input_path: str,
     k: int,
     sample_fraction: float,
     min_multiplicity: int = 2,
     batch_size: int = 10000,
 ):
+    # Aho-Corasick
     threads = globals.threads
     seed = globals.seed + 578
 
@@ -188,110 +267,6 @@ def get_feature_matrix(
     reverse_complement_kmers = [reverse_complement(kmer) for kmer in selected_kmers]
     selected_kmers.extend(reverse_complement_kmers)
     del reverse_complement_kmers
-    logger.debug("Computing hash values for selected k-mers")
-    selected_hash_values = np.array(
-        [get_hash_value(kmer, seed=seed) for kmer in selected_kmers], dtype=np.uint64
-    )
-    del selected_kmers
-    logger.debug("Sorting hash values")
-    selected_hash_values.sort()
 
-    logger.debug(f"Creating shared memory for selected hash values")
-    shm = shared_memory.SharedMemory(create=True, size=selected_hash_values.nbytes)
-    shm_array = np.ndarray(
-        selected_hash_values.shape,
-        dtype=selected_hash_values.dtype,
-        buffer=shm.buf,
-    )
-    shm_shape = selected_hash_values.shape
-    np.copyto(shm_array, selected_hash_values)
-    del selected_hash_values
-    gc.collect()
-
-    logger.debug(f"Extracting k-mers from reads ({threads=} {batch_size=})")
-    row_indices, col_indices, data = array("L", []), array("Q", []), array("L", [])
-    read_names, strands = [], []
-    fished_batches = 0
-
-    def callback(
-        i0,
-        indices,
-        hash_values,
-        multiplicity_values,
-        batch_read_names,
-        batch_strands,
-    ):
-        nonlocal fished_batches
-
-        batches[i0] = None
-        row_indices.extend(indices)
-        col_indices.extend(hash_values)
-        data.extend(multiplicity_values)
-        read_names.extend(batch_read_names)
-        strands.extend(batch_strands)
-
-        fished_batches += 1
-        logger.debug("Progress: %.2f%%", fished_batches / len(batches) * 100)
-
-    with Pool(threads, maxtasksperchild=100) as pool:
-        work = partial(
-            _process_batch, k=k, seed=seed, shm_name=shm.name, shm_shape=shm_shape
-        )
-        for result in pool.imap_unordered(work, batches.values()):
-            callback(*result)
-    shm.close()
-    shm.unlink()
-
-    if len(data) == 0:
-        raise ValueError("No selected k-mers found in the input file.")
-    if len(row_indices) != len(col_indices) or len(row_indices) != len(data):
-        raise ValueError(
-            f"{len(row_indices)=}, {len(col_indices)=}, {len(data)=} mismatch"
-        )
-    row_indices_numpy = np.array(row_indices, dtype=np.uint32)
-    col_indices_numpy = np.array(col_indices, dtype=np.uint64)
-    data_numpy = np.array(data, dtype=np.uint16)
-    if len(row_indices_numpy) != len(col_indices_numpy) or len(
-        row_indices_numpy
-    ) != len(data_numpy):
-        raise ValueError(
-            f"{len(row_indices_numpy)=}, {len(col_indices_numpy)=}, {len(data_numpy)=} mismatch"
-        )
-    del row_indices, col_indices, data
-    gc.collect()
-
-    # # Filter out indices with multiplicity < min_multiplicity
-    # logger.debug("Filtering k-mers by minimum multiplicity")
-    # filtered_indices = _get_indices_by_min_count(
-    #     col_indices_numpy, min_count=min_multiplicity
-    # )
-    # row_indices_numpy = row_indices_numpy[filtered_indices]
-    # col_indices_numpy = col_indices_numpy[filtered_indices]
-    # data_numpy = data_numpy[filtered_indices]
-    # del filtered_indices
-    # gc.collect()
-
-    # Remove empty columns
-    logger.debug("Removing empty columns")
-    _, col_indices_numpy = np.unique(col_indices_numpy, return_inverse=True)
-    if len(row_indices_numpy) != len(col_indices_numpy) or len(
-        row_indices_numpy
-    ) != len(data_numpy):
-        raise ValueError(
-            f"{len(row_indices_numpy)=}, {len(col_indices_numpy)=}, {len(data_numpy)=} mismatch"
-        )
-
-    # Create sparse matrix
-    logger.debug("Creating sparse feature matrix")
-    n_rows = row_indices_numpy.max() + 1
-    n_cols = col_indices_numpy.max() + 1
-    feature_matrix = csr_matrix(
-        (data_numpy, (row_indices_numpy, col_indices_numpy)),
-        shape=(n_rows, n_cols),
-        dtype=np.uint32,
-    )
-
-    logger.debug(
-        f"{feature_matrix.shape=}, {len(feature_matrix.data)=}, density={_get_matrix_density(feature_matrix):.6f}"
-    )
-    return feature_matrix, read_names, strands
+    logger.debug("Building Aho-Corasick automaton")
+    automaton = _build_automaton(selected_kmers)
