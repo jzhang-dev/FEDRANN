@@ -131,7 +131,22 @@ def _parse_kmer_searcher_output(path: str):
             yield current_name, current_indices, current_counts
 
 
-def get_kmer_features(fasta_path: str, k: int, sample_fraction: float, min_multiplicity: int = 2):
+def count_lines(filename):
+    """使用 wc -l 命令统计行数"""
+    result = subprocess.run(
+        ["wc", "-l", filename],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"wc 命令执行失败: {result.stderr}")
+    return int(result.stdout.split()[0])
+
+
+def get_kmer_features(
+    fasta_path: str, k: int, sample_fraction: float, min_multiplicity: int = 2
+):
     jf_path = join(globals.temp_dir, "kmer_counts.jf")
     hash_size = "10G"
     threads = globals.threads
@@ -150,31 +165,27 @@ def get_kmer_features(fasta_path: str, k: int, sample_fraction: float, min_multi
         "-o",
         jf_path,
     ]
-    logger.debug(f"Running Jellyfish count command: {' '.join(jellyfish_count_command)}")
+    logger.debug(
+        f"Running Jellyfish count command: {' '.join(jellyfish_count_command)}"
+    )
     subprocess.run(jellyfish_count_command, check=True)
     if not isfile(jf_path):
         raise RuntimeError(f"Jellyfish count output file not found: {jf_path}")
-    
 
     fwd_kmer_library_path = join(globals.temp_dir, "fwd_kmer_library.fasta")
     rev_kmer_library_path = join(globals.temp_dir, "rev_kmer_library.fasta")
-    merged_kmer_library_path = join(globals.temp_dir, "merged_kmer_library.txt")
-    
+
     awk_script = r"""
         BEGIN {
-            srand(seed);  # 设置随机数种子，默认为42
-            skip_prob = 1 - p;  # 计算跳过概率
+            srand(seed);  
+            skip_prob = 1 - p;  
         }
         {
-            # 处理奇数行（第一行编号为1）
             if (NR % 2 == 1) {
-                current_pair = $0;  # 保存奇数行
-                next;              # 跳过处理
+                current_pair = $0;  
+                next;              
             } else {
-                # 偶数行：与上一行组成完整数据单位
                 current_pair = current_pair ORS $0;
-                
-                # 随机决定是否保留这对数据
                 if (rand() > skip_prob) {
                     print current_pair;
                 }
@@ -185,35 +196,26 @@ def get_kmer_features(fasta_path: str, k: int, sample_fraction: float, min_multi
     logger.debug(f"Running Jellyfish dump command: {command}")
     subprocess.run(command, shell=True, check=True)
 
+    kmer_count = count_lines(fwd_kmer_library_path) // 2  # 每个kmer有两行（header和sequence）
+    logger.debug(f"Number of kmers in the library: {kmer_count}")
+
     command = f"seqkit seq -r -p -t DNA -j {globals.threads} {fwd_kmer_library_path} > {rev_kmer_library_path}"
     logger.debug(f"Creating reverse complement for kmer library: {command}")
     subprocess.run(command, shell=True, check=True)
 
-    command = f"cat {fwd_kmer_library_path} {rev_kmer_library_path} | grep -v '^>' > {merged_kmer_library_path}"
-    logger.debug(f"Running cat command: {command}")
-    subprocess.run(command, shell=True, check=True)
+    
+    output_path = join(globals.temp_dir, "features.txt")
 
-    rev_input_path = join(globals.temp_dir, "rev_input.fasta")
-    command = f"seqkit seq -r -p -t DNA -j {globals.threads} {fasta_path} > {rev_input_path}"
-    logger.debug(f"Creating reverse complement for input FASTA: {command}")
-    subprocess.run(command, shell=True, check=True)
-
-    fwd_output_path = join(globals.temp_dir, "fwd_features.txt")
-    rev_output_path = join(globals.temp_dir, "rev_features.txt")
-
-    command = f"kmer_searcher {merged_kmer_library_path} {fasta_path} {fwd_output_path} {k} {globals.threads}"
+    command = f"cat {fwd_kmer_library_path} {rev_kmer_library_path} | grep -v '^>' | kmer_searcher /dev/stdin {fasta_path} {output_path} {k} {globals.threads}"
     logger.debug(f"Searching kmers for forward strands: {command}")
     subprocess.run(command, shell=True, check=True)
 
-    command = f"kmer_searcher {merged_kmer_library_path} {rev_input_path} {rev_output_path} {k} {globals.threads}"
-    logger.debug(f"Searching kmers for reverse strands: {command}")
-    subprocess.run(command, shell=True, check=True)
-
     logger.debug("Parsing kmer_searcher output")
-    for name, indices, counts in _parse_kmer_searcher_output(fwd_output_path):
+    for name, indices, counts in _parse_kmer_searcher_output(output_path):
         yield name, indices, counts, 0
-    for name, indices, counts in _parse_kmer_searcher_output(rev_output_path):
-        yield name, indices, counts, 1
+        rev_indices = [i + kmer_count if i < kmer_count else i - kmer_count for i in indices]
+        yield name, rev_indices, counts, 1
+
 
 # 使用示例
 if __name__ == "__main__":
