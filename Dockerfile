@@ -1,6 +1,7 @@
 FROM continuumio/miniconda3:25.3.1-1
 
 RUN apt-get update && apt-get install -y \
+    build-essential \
     time \
     tzdata \
     && apt-get clean \
@@ -13,9 +14,13 @@ RUN conda env create -f /tmp/environment.yml --name default && \
 RUN conda init bash
 ENV PATH=/opt/conda/envs/default/bin:$PATH
 
-# 安装 SeqNeighbor
+# Build kmer_searcher
 WORKDIR /app
 COPY . .
+RUN bash /app/external/kmer_searcher/build.sh
+ENV PATH=/app/external/kmer_searcher/build:$PATH
+
+# 安装 SeqNeighbor
 RUN pip install --no-cache-dir .
 
 WORKDIR /workdir

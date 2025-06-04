@@ -162,7 +162,28 @@ def get_kmer_features(fasta_path: str, k: int, sample_fraction: float, min_multi
     rev_kmer_library_path = join(globals.temp_dir, "rev_kmer_library.fasta")
     merged_kmer_library_path = join(globals.temp_dir, "merged_kmer_library.txt")
     
-    command = f"jellyfish dump -L {min_multiplicity} {jf_path} | awk -v p={sample_fraction} 'BEGIN {{srand()}} rand() < p' > {fwd_kmer_library_path}"
+    awk_script = r"""
+        BEGIN {
+            srand(seed);  # 设置随机数种子，默认为42
+            skip_prob = 1 - p;  # 计算跳过概率
+        }
+        {
+            # 处理奇数行（第一行编号为1）
+            if (NR % 2 == 1) {
+                current_pair = $0;  # 保存奇数行
+                next;              # 跳过处理
+            } else {
+                # 偶数行：与上一行组成完整数据单位
+                current_pair = current_pair ORS $0;
+                
+                # 随机决定是否保留这对数据
+                if (rand() > skip_prob) {
+                    print current_pair;
+                }
+            }
+        }
+    """
+    command = f"jellyfish dump -L {min_multiplicity} {jf_path} | awk -v p={sample_fraction} -v seed={globals.seed} '{awk_script}' > {fwd_kmer_library_path}"
     logger.debug(f"Running Jellyfish dump command: {command}")
     subprocess.run(command, shell=True, check=True)
 
@@ -182,7 +203,9 @@ def get_kmer_features(fasta_path: str, k: int, sample_fraction: float, min_multi
     fwd_output_path = join(globals.temp_dir, "fwd_features.txt")
     rev_output_path = join(globals.temp_dir, "rev_features.txt")
 
-    kmer_searcher = "/home/zhangjiayuan/workspace/SeqNeighbor/external/kmer_searcher/build/kmer_searcher"
+    #kmer_searcher = "/home/zhangjiayuan/workspace/SeqNeighbor/external/kmer_searcher/build/kmer_searcher"
+    kmer_searcher = "kmer_searcher"
+
     command = f"{kmer_searcher} {merged_kmer_library_path} {fasta_path} {fwd_output_path} {k} {globals.threads}"
     logger.debug(f"Searching kmers for forward strands: {command}")
     subprocess.run(command, shell=True, check=True)
