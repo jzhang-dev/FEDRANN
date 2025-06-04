@@ -17,10 +17,12 @@ ENV PATH=/opt/conda/envs/default/bin:$PATH
 # Build kmer_searcher
 WORKDIR /app
 COPY . .
-RUN bash /app/external/kmer_searcher/build.sh
+WORKDIR /app/external/kmer_searcher/
+RUN bash ./build.sh
 ENV PATH=/app/external/kmer_searcher/build:$PATH
 
 # 安装 SeqNeighbor
+WORKDIR /app
 RUN pip install --no-cache-dir .
 
 WORKDIR /workdir

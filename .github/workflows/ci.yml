@@ -26,9 +26,10 @@ jobs:
 
     - name: Build kmer_searcher
       shell: bash -l {0}
+      working-directory: external/kmer_searcher
       run: |
-        external/kmer_searcher/build.sh
-        export PATH=$PWD/external/kmer_searcher/bin:$PATH
+        ./build.sh
+        export PATH=$PWD/build:$PATH
 
     - name: Install package
       shell: bash -l {0}
