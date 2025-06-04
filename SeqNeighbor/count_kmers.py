@@ -187,7 +187,7 @@ def get_kmer_features(fasta_path: str, k: int, sample_fraction: float, min_multi
     logger.debug(f"Running Jellyfish dump command: {command}")
     subprocess.run(command, shell=True, check=True)
 
-    command = f"seqkit seq -r -p -t DNA {fwd_kmer_library_path} > {rev_kmer_library_path}"
+    command = f"seqkit seq -r -p -t DNA -j {globals.threads} {fwd_kmer_library_path} > {rev_kmer_library_path}"
     logger.debug(f"Creating reverse complement for kmer library: {command}")
     subprocess.run(command, shell=True, check=True)
 
@@ -196,24 +196,22 @@ def get_kmer_features(fasta_path: str, k: int, sample_fraction: float, min_multi
     subprocess.run(command, shell=True, check=True)
 
     rev_input_path = join(globals.temp_dir, "rev_input.fasta")
-    command = f"seqkit seq -r -p -t DNA {fasta_path} > {rev_input_path}"
+    command = f"seqkit seq -r -p -t DNA -j {globals.threads} {fasta_path} > {rev_input_path}"
     logger.debug(f"Creating reverse complement for input FASTA: {command}")
     subprocess.run(command, shell=True, check=True)
 
     fwd_output_path = join(globals.temp_dir, "fwd_features.txt")
     rev_output_path = join(globals.temp_dir, "rev_features.txt")
 
-    #kmer_searcher = "/home/zhangjiayuan/workspace/SeqNeighbor/external/kmer_searcher/build/kmer_searcher"
-    kmer_searcher = "kmer_searcher"
-
-    command = f"{kmer_searcher} {merged_kmer_library_path} {fasta_path} {fwd_output_path} {k} {globals.threads}"
+    command = f"kmer_searcher {merged_kmer_library_path} {fasta_path} {fwd_output_path} {k} {globals.threads}"
     logger.debug(f"Searching kmers for forward strands: {command}")
     subprocess.run(command, shell=True, check=True)
 
-    command = f"{kmer_searcher} {merged_kmer_library_path} {rev_input_path} {rev_output_path} {k} {globals.threads}"
+    command = f"kmer_searcher {merged_kmer_library_path} {rev_input_path} {rev_output_path} {k} {globals.threads}"
     logger.debug(f"Searching kmers for reverse strands: {command}")
     subprocess.run(command, shell=True, check=True)
 
+    logger.debug("Parsing kmer_searcher output")
     for name, indices, counts in _parse_kmer_searcher_output(fwd_output_path):
         yield name, indices, counts, 0
     for name, indices, counts in _parse_kmer_searcher_output(rev_output_path):
