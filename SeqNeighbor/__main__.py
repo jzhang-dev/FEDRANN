@@ -186,7 +186,7 @@ def compute_dimension_reduction(
             threads=globals.threads,
         )
     elif method.lower() == "srp":
-        logger.info("Using multiprocess Sparse Random Projection for dimensionality reduction.")
+        logger.info("Using Sparse Random Projection for dimensionality reduction.")
         seed = globals.seed + 5599
         embeddings = SparseRandomProjection().transform(
             data=feature_matrix,
