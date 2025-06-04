@@ -117,7 +117,7 @@ def _parse_kmer_searcher_output(path: str):
 
     with open(path, "r") as f:
         for line in f:
-            line = line.strip("\n")
+            line = line.rstrip("\n")
             if line.startswith(">"):
                 if name:
                     yield name, indices, counts

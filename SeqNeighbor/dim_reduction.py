@@ -180,7 +180,7 @@ class mp_SparseRandomProjection:
 
             pool.map(work, range(0, data.shape[0], batch_size))
 
-        assert isinstance(embeddings, np.ndarray)
+        embeddings = np.array(embeddings)
         return embeddings
 
 
