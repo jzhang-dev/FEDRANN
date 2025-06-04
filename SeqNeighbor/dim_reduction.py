@@ -14,6 +14,8 @@ from sklearn.decomposition import PCA as sklearn_PCA
 from sklearn.utils.extmath import safe_sparse_dot
 import sharedmem
 
+from .custom_logging import logger
+
 
 class _SpectralMatrixFree:
     """
@@ -111,8 +113,8 @@ class GaussianRandomProjection(_DimensionReduction):
 
 
 class SparseRandomProjection(_DimensionReduction):
-    def transform(self, data, n_dimensions: int):
-        reducer = random_projection.SparseRandomProjection(n_components=n_dimensions)
+    def transform(self, data, n_dimensions: int, seed: int = 4040):
+        reducer = random_projection.SparseRandomProjection(n_components=n_dimensions, random_state=seed)
         embedding = reducer.fit_transform(data)
         return embedding
 

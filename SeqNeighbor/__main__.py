@@ -176,14 +176,22 @@ def get_feature_weights(feature_matrix: csr_matrix, method: str) -> csr_matrix:
 def compute_dimension_reduction(
     feature_matrix: csr_matrix, embedding_dimension: int, method: str
 ) -> NDArray:
-    if method.lower() == "srp":
-        logger.info("Using Sparse Random Projection for dimensionality reduction.")
+    if method.lower() == "mpsrp":
+        logger.info("Using multiprocess Sparse Random Projection for dimensionality reduction.")
         seed = globals.seed + 5599
         embeddings = mp_SparseRandomProjection().transform(
             data=feature_matrix,
             n_dimensions=embedding_dimension,
             seed=seed,
             threads=globals.threads,
+        )
+    elif method.lower() == "srp":
+        logger.info("Using multiprocess Sparse Random Projection for dimensionality reduction.")
+        seed = globals.seed + 5599
+        embeddings = SparseRandomProjection().transform(
+            data=feature_matrix,
+            n_dimensions=embedding_dimension,
+            seed=seed,
         )
     else:
         raise ValueError(f"Unsupported dimension reduction method: {method}.")
