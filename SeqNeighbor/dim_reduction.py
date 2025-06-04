@@ -114,7 +114,7 @@ class GaussianRandomProjection(_DimensionReduction):
 
 class SparseRandomProjection(_DimensionReduction):
     def transform(self, data, n_dimensions: int, seed: int = 4040):
-        reducer = random_projection.SparseRandomProjection(n_components=n_dimensions, random_state=seed)
+        reducer = random_projection.SparseRandomProjection(n_components=n_dimensions, random_state=seed, dense_output=True)
         embedding = reducer.fit_transform(data)
         return embedding
 
