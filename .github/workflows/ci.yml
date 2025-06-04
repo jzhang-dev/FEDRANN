@@ -30,7 +30,7 @@ jobs:
       working-directory: external/kmer_searcher
       run: |
         ./build.sh
-        export PATH=$PWD/build:$PATH
+        echo "$PWD/build:$PATH" >> $GITHUB_PATH
 
     - name: Install package
       shell: bash -l {0}
