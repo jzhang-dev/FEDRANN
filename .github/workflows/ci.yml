@@ -17,6 +17,7 @@ jobs:
           repository: CycloneSEQ-Bioinformatics/kmer_searcher
           token: ${{ secrets.KMER_SEARCHER_READONLY }}
           ref: main
+          submodules: true
           path: external/kmer_searcher
 
     - name: Set up Conda
