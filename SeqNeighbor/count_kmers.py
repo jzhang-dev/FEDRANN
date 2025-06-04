@@ -111,26 +111,24 @@ def run_jellyfish(
 
 
 def _parse_kmer_searcher_output(path: str):
-    indices = []
-    counts = []
-    name = ""
+    current_name = ""
+    current_indices = []
+    current_counts = []
 
     with open(path, "r") as f:
         for line in f:
-            line = line.rstrip("\n")
             if line.startswith(">"):
-                if name:
-                    yield name, indices, counts
-                parts = line[1:].split()
-                name = parts[0]
-                indices = []
-                counts = []
+                if current_name:
+                    yield current_name, current_indices, current_counts
+                current_name = line[1:].split(maxsplit=1)[0]
+                current_indices = []
+                current_counts = []
             else:
-                index, count = map(int, line.split())
-                indices.append(index)
-                counts.append(count)
-        if name:  # 最后一个记录
-            yield name, indices, counts
+                idx, cnt = map(int, line.split())
+                current_indices.append(idx)
+                current_counts.append(cnt)
+        if current_name:
+            yield current_name, current_indices, current_counts
 
 
 def get_kmer_features(fasta_path: str, k: int, sample_fraction: float, min_multiplicity: int = 2):
