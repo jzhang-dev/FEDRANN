@@ -2,6 +2,8 @@
 
 set -exuo pipefail
 
+export PATH="$(pwd)/external/kmer_searcher/build/:$PATH"
+
 rm -rf test/output/
 mkdir -p test/output/
 

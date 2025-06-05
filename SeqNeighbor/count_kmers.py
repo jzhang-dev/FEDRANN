@@ -140,7 +140,7 @@ def count_lines(filename):
         text=True,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"wc 命令执行失败: {result.stderr}")
+        raise RuntimeError(f"wc failed: {result.stderr}")
     return int(result.stdout.split()[0])
 
 
@@ -196,6 +196,7 @@ def get_kmer_features(
     logger.debug(f"Running Jellyfish dump command: {command}")
     subprocess.run(command, shell=True, check=True)
 
+    logger.debug(f"Counting kmers in the library: {fwd_kmer_library_path}")
     kmer_count = count_lines(fwd_kmer_library_path) // 2  # 每个kmer有两行（header和sequence）
     logger.debug(f"Number of kmers in the library: {kmer_count}")
 

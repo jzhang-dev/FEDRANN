@@ -186,11 +186,12 @@ def get_feature_matrix_1(
         )
 
     # Get features
-    row_indices = []
-    col_indices = []
-    data = []
+    row_indices = array('I', [])  # uint32
+    col_indices = array('L', [])  # uint64
+    data = array('I', [])  # uint32
     read_names = []
     strands = []
+    
     for i, (name, indices, counts, strand) in enumerate(
         get_kmer_features(
             input_fasta_path,
