@@ -205,14 +205,17 @@ def get_kmer_features(
     subprocess.run(command, shell=True, check=True)
 
     
-    output_path = join(globals.temp_dir, "features.txt")
+    kmer_searcher_output_dir = join(globals.temp_dir, "kmer_searcher")
 
-    command = f"cat {fwd_kmer_library_path} {rev_kmer_library_path} | grep -v '^>' | kmer_searcher /dev/stdin {fasta_path} {output_path} {k} {globals.threads}"
+    command = f"cat {fwd_kmer_library_path} {rev_kmer_library_path} | grep -v '^>' | kmer_searcher /dev/stdin {fasta_path} {kmer_searcher_output_dir} {k} {globals.threads}"
     logger.debug(f"Searching kmers for forward strands: {command}")
     subprocess.run(command, shell=True, check=True)
 
     logger.debug("Parsing kmer_searcher output")
-    for name, indices, counts in _parse_kmer_searcher_output(output_path):
+    kmer_searcher_output_path = join(kmer_searcher_output_dir, "output.txt")
+    if not isfile(kmer_searcher_output_path):
+        raise RuntimeError(f"kmer_searcher output file not found: {kmer_searcher_output_path}")
+    for name, indices, counts in _parse_kmer_searcher_output(kmer_searcher_output_path):
         yield name, indices, counts, 0
         rev_indices = [i + kmer_count if i < kmer_count else i - kmer_count for i in indices]
         yield name, rev_indices, counts, 1

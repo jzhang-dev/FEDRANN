@@ -186,12 +186,12 @@ def get_feature_matrix_1(
         )
 
     # Get features
-    row_indices = array('I', [])  # uint32
-    col_indices = array('L', [])  # uint64
-    data = array('I', [])  # uint32
+    row_indices = array("I", [])  # uint32
+    col_indices = array("L", [])  # uint64
+    data = array("I", [])  # uint32
     read_names = []
     strands = []
-    
+
     for i, (name, indices, counts, strand) in enumerate(
         get_kmer_features(
             input_fasta_path,
@@ -205,6 +205,9 @@ def get_feature_matrix_1(
         data.extend(counts)
         read_names.append(name)
         strands.append(strand)
+
+        if i % 10000 == 0:
+            logger.debug(f"Processed {i} records: {len(data)=}")
 
     # Create sparse matrix
     logger.debug("Creating sparse feature matrix")
