@@ -206,8 +206,8 @@ def get_feature_matrix_1(
         read_names.append(name)
         strands.append(strand)
 
-        if i % 10000 == 0:
-            logger.debug(f"Processed {i} records: {len(data)=}")
+        if (i+1) % 10000 == 0:
+            logger.debug(f"Processed {i+1} records: {len(data)=}")
 
     # Create sparse matrix
     logger.debug("Creating sparse feature matrix")
