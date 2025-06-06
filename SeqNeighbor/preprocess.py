@@ -10,13 +10,13 @@ def tf_transform(feature_matrix: csr_matrix):
 
 
 def idf_transform(feature_matrix: csr_matrix, idf=None):
-    feature_matrix.data = np.ones_like(feature_matrix.data, dtype=np.float32)
+    #feature_matrix.data = np.ones_like(feature_matrix.data, dtype=np.float32)
 
     if idf is None:
         col_sums = feature_matrix.sum(axis=0).A1
         assert feature_matrix.shape is not None
-        N = feature_matrix.shape[0]
-        idf = np.log((N + 1) / (col_sums + 1)) + 1
+        nrow = feature_matrix.shape[0]
+        idf = np.log(nrow / col_sums)
 
     feature_matrix.data *= idf[feature_matrix.indices]
 

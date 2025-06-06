@@ -155,21 +155,9 @@ def get_feature_weights(feature_matrix: csr_matrix, method: str) -> csr_matrix:
     logger.debug(f"Applying preprocessing method {method!r} to feature matrix.")
 
     if method == "IDF":
-        feature_matrix[feature_matrix > 0] = 1
         feature_matrix, _ = idf_transform(feature_matrix)
-    elif method == "TF-IDF":
-        feature_matrix = tf_transform(feature_matrix)
-        feature_matrix, _ = idf_transform(feature_matrix)
-    elif method == "None":
-        feature_matrix[feature_matrix > 0] = 1
-    elif method == "count":
-        pass
-    elif method == "TF":
-        feature_matrix = tf_transform(feature_matrix)
     else:
-        raise ValueError(
-            f"Invalid preprocess method: {method}. Expected one of TF/IDF/TF-IDF/None/count."
-        )
+        raise ValueError()
     return feature_matrix
 
 

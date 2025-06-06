@@ -115,13 +115,11 @@ def run_jellyfish(
 
 def _parse_kmer_searcher_output(filename: str):
     with open(filename, "rb", buffering=1024 ** 3) as f:
-        # 验证文件头
         header = f.read(16)
         if len(header) < 16:
             raise ValueError("文件头不完整")
 
         magic, version, reserved, total_records = struct.unpack("<4sB3sQ", header)
-        logger.debug(f"{total_records=}")
         
         if magic != b"KMER":
             raise ValueError("无效的文件格式")
@@ -129,48 +127,21 @@ def _parse_kmer_searcher_output(filename: str):
             raise ValueError(f"不支持的版本号: {version}")
 
         for _ in range(total_records):
-            # 读取ID部分
-            id_len_data = f.read(2)
-            if len(id_len_data) != 2:
-                raise ValueError("ID长度读取失败")
-            id_len = struct.unpack("<H", id_len_data)[0]
-            
+            id_len = struct.unpack("<H", f.read(2))[0]
             id_bytes = f.read(id_len)
-            if len(id_bytes) != id_len:
-                raise ValueError("ID内容读取不完整")
-            
             try:
                 id_str = id_bytes.decode("utf-8")
             except UnicodeDecodeError:
                 id_str = "".join(chr(b) if b < 128 else "_" for b in id_bytes)
 
-            # 读取k-mer对数
-            pair_count_data = f.read(4)
-            if len(pair_count_data) != 4:
-                raise ValueError("k-mer对数读取失败")
-            pair_count = struct.unpack("<I", pair_count_data)[0]
+            index_count = struct.unpack("<I", f.read(4))[0]
+            data = f.read(8 * index_count)
             
-            # 计算预期数据块大小并读取
-            data_block_size = 12 * pair_count  # 每个k-mer对12字节(8+4)
-            data_block = f.read(data_block_size)
-            if len(data_block) != data_block_size:
-                raise ValueError(f"k-mer对数据不完整，预期{data_block_size}字节，得到{len(data_block)}字节")
-            
-            # 解包数据并验证
-            indices = []
-            counts = []
-            for i in range(pair_count):
-                offset = i * 12
-                index = struct.unpack_from("<Q", data_block, offset)[0]
-                count = struct.unpack_from("<I", data_block, offset + 8)[0]
-                
-                if count == 0:
-                    raise ValueError(f"发现零计数k-mer")
-                
-                indices.append(index)
-                counts.append(count)
-            
-            yield id_str, indices, counts
+            indices = struct.unpack(f"<{index_count}Q", data)
+            # logger.debug(
+            #     f"Parsed record: id={id_str}, indices={indices}"
+            # )
+            yield id_str, indices
 
 
 def count_lines(filename):
@@ -260,9 +231,9 @@ def get_kmer_features(
         raise RuntimeError(
             f"kmer_searcher output file not found: {kmer_searcher_output_path}"
         )
-    for name, indices, counts in _parse_kmer_searcher_output(kmer_searcher_output_path):
-        yield name, indices, counts, 0
+    for name, indices in _parse_kmer_searcher_output(kmer_searcher_output_path):
+        yield name, indices, 0
         rev_indices = [
             i + kmer_count if i < kmer_count else i - kmer_count for i in indices
         ]
-        yield name, rev_indices, counts, 1
+        yield name, rev_indices, 1
