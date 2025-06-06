@@ -124,40 +124,6 @@ def get_hash_value(kmer: str, seed: int) -> int:
     return xxhash.xxh3_64(kmer, seed=seed).intdigest()
 
 
-def _process_batch(batch, k: int, seed: int, shm_name: str, shm_shape) -> tuple:
-    i0, records = batch
-    if len(records) == 0:
-        raise ValueError("Empty batch received")
-
-    indices = array("L", [])
-    hash_values = array("Q", [])
-    multiplicity_values = array("L", [])
-
-    shm = shared_memory.SharedMemory(name=shm_name)
-    selected_hash_values = np.ndarray(shape=shm_shape, dtype=np.uint64, buffer=shm.buf)
-    if len(selected_hash_values) == 0:
-        raise ValueError("Zero selected k-mers provided")
-
-    for i, record in enumerate(records):
-        if len(record.sequence) < k:
-            raise ValueError(
-                f"Record sequence length is less than k: {record.name=} {len(record.sequence)=}"
-            )
-        sequence = record.sequence
-        record_kmers = (sequence[p : p + k] for p in range(len(sequence) - k + 1))
-        record_hash_values = [get_hash_value(kmer, seed=seed) for kmer in record_kmers]
-        counts = collections.Counter(record_hash_values)
-        unique_hashes = np.array(list(counts.keys()), dtype=np.uint64)
-        unique_hashes.sort()
-        common_hashes = get_common_values(selected_hash_values, unique_hashes)
-        indices.extend([i0 + i] * len(common_hashes))
-        hash_values.extend(common_hashes)
-        multiplicity_values.extend(counts[h] for h in common_hashes)
-
-    shm.close()
-    read_names = [record.name for record in records]
-    strands = [record.orientation for record in records]
-    return i0, indices, hash_values, multiplicity_values, read_names, strands
 
 
 def get_feature_matrix_1(

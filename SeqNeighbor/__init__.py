@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 
-__version__ = "v0.4.12"
+__version__ = "v0.4.13"
 __description__ = f"seqNeighbor {__version__}: a software finding reads' nearest neighbors rapidly."
 __url__ = ""
