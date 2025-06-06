@@ -5,6 +5,9 @@ from os.path import abspath, isfile, join
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 from typing import Generator, Tuple, Optional, Iterable
+import struct
+from collections import namedtuple
+from typing import Iterator
 
 from .custom_logging import logger
 from . import globals
@@ -110,25 +113,62 @@ def run_jellyfish(
     return AsyncJellyfishResult(temp_dir, future)
 
 
-def _parse_kmer_searcher_output(path: str):
-    current_name = ""
-    current_indices = []
-    current_counts = []
+def _parse_kmer_searcher_output(filename: str):
+    with open(filename, "rb") as f:
+        # 验证文件头
+        header = f.read(16)
+        if len(header) < 16:
+            raise ValueError("文件头不完整")
 
-    with open(path, "r") as f:
-        for line in f:
-            if line.startswith(">"):
-                if current_name:
-                    yield current_name, current_indices, current_counts
-                current_name = line[1:].split(maxsplit=1)[0]
-                current_indices = []
-                current_counts = []
-            else:
-                idx, cnt = map(int, line.split())
-                current_indices.append(idx)
-                current_counts.append(cnt)
-        if current_name:
-            yield current_name, current_indices, current_counts
+        magic, version, reserved, total_records = struct.unpack("<4sB3sQ", header)
+        if magic != b"KMER":
+            raise ValueError("无效的文件格式")
+        if version != 1:
+            raise ValueError(f"不支持的版本号: {version}")
+
+        for _ in range(total_records):
+            # 读取ID部分
+            id_len_data = f.read(2)
+            if len(id_len_data) != 2:
+                raise ValueError("ID长度读取失败")
+            id_len = struct.unpack("<H", id_len_data)[0]
+            
+            id_bytes = f.read(id_len)
+            if len(id_bytes) != id_len:
+                raise ValueError("ID内容读取不完整")
+            
+            try:
+                id_str = id_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                id_str = "".join(chr(b) if b < 128 else "_" for b in id_bytes)
+
+            # 读取k-mer对数
+            pair_count_data = f.read(4)
+            if len(pair_count_data) != 4:
+                raise ValueError("k-mer对数读取失败")
+            pair_count = struct.unpack("<I", pair_count_data)[0]
+            
+            # 计算预期数据块大小并读取
+            data_block_size = 12 * pair_count  # 每个k-mer对12字节(8+4)
+            data_block = f.read(data_block_size)
+            if len(data_block) != data_block_size:
+                raise ValueError(f"k-mer对数据不完整，预期{data_block_size}字节，得到{len(data_block)}字节")
+            
+            # 解包数据并验证
+            indices = []
+            counts = []
+            for i in range(pair_count):
+                offset = i * 12
+                index = struct.unpack_from("<Q", data_block, offset)[0]
+                count = struct.unpack_from("<I", data_block, offset + 8)[0]
+                
+                if count == 0:
+                    raise ValueError(f"发现零计数k-mer")
+                
+                indices.append(index)
+                counts.append(count)
+            
+            yield id_str, indices, counts
 
 
 def count_lines(filename):
@@ -197,14 +237,15 @@ def get_kmer_features(
     subprocess.run(command, shell=True, check=True)
 
     logger.debug(f"Counting kmers in the library: {fwd_kmer_library_path}")
-    kmer_count = count_lines(fwd_kmer_library_path) // 2  # 每个kmer有两行（header和sequence）
+    kmer_count = (
+        count_lines(fwd_kmer_library_path) // 2
+    )  # 每个kmer有两行（header和sequence）
     logger.debug(f"Number of kmers in the library: {kmer_count}")
 
     command = f"seqkit seq -r -p -t DNA -j {globals.threads} {fwd_kmer_library_path} > {rev_kmer_library_path}"
     logger.debug(f"Creating reverse complement for kmer library: {command}")
     subprocess.run(command, shell=True, check=True)
 
-    
     kmer_searcher_output_dir = join(globals.temp_dir, "kmer_searcher")
 
     command = f"cat {fwd_kmer_library_path} {rev_kmer_library_path} | grep -v '^>' | kmer_searcher /dev/stdin {fasta_path} {kmer_searcher_output_dir} {k} {globals.threads}"
@@ -212,33 +253,14 @@ def get_kmer_features(
     subprocess.run(command, shell=True, check=True)
 
     logger.debug("Parsing kmer_searcher output")
-    kmer_searcher_output_path = join(kmer_searcher_output_dir, "output.txt")
+    kmer_searcher_output_path = join(kmer_searcher_output_dir, "output.bin")
     if not isfile(kmer_searcher_output_path):
-        raise RuntimeError(f"kmer_searcher output file not found: {kmer_searcher_output_path}")
+        raise RuntimeError(
+            f"kmer_searcher output file not found: {kmer_searcher_output_path}"
+        )
     for name, indices, counts in _parse_kmer_searcher_output(kmer_searcher_output_path):
         yield name, indices, counts, 0
-        rev_indices = [i + kmer_count if i < kmer_count else i - kmer_count for i in indices]
+        rev_indices = [
+            i + kmer_count if i < kmer_count else i - kmer_count for i in indices
+        ]
         yield name, rev_indices, counts, 1
-
-
-# 使用示例
-if __name__ == "__main__":
-    # 异步启动任务
-    input_fastq = "example.fastq"
-    result = run_jellyfish(input_fastq, k=21, min_multiplicity=3)
-
-    print("Jellyfish任务已启动，继续执行其他代码...")
-    # 这里可以执行其他代码
-
-    # 当需要结果时
-    if result.done():
-        print("任务已完成，结果如下:")
-    else:
-        print("等待任务完成...")
-
-    # 获取结果（如果未完成会阻塞）
-    for kmer, count in result.get_result():
-        print(f"{kmer}: {count}")
-
-    # 清理临时文件
-    result.cleanup()

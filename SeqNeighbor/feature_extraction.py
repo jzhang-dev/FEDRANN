@@ -186,9 +186,9 @@ def get_feature_matrix_1(
         )
 
     # Get features
-    row_indices = array("I", [])  # uint32
-    col_indices = array("L", [])  # uint64
-    data = array("I", [])  # uint32
+    row_indices = array("L", [])  # uint32
+    col_indices = array("Q", [])  # uint64
+    data = array("L", [])  # uint32
     read_names = []
     strands = []
 
