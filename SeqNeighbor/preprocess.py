@@ -24,7 +24,8 @@ def idf_transform(feature_matrix: csr_matrix, idf=None):
     
     # Sparse matrix multiplication (memory-efficient)
     logger.debug("Applying IDF transformation")
-    idf_diag = diags(idf, format='csr')
+    idf_diag = diags(idf, format='csc')
+    feature_matrix.sort_indices()
     feature_matrix = feature_matrix.dot(idf_diag)
     
     return feature_matrix, idf

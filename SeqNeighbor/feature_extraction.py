@@ -172,7 +172,7 @@ def get_feature_matrix_1(
         strands.append(strand)
 
         if (i+1) % 100000 == 0:
-            logger.debug(f"Processed {i+1} records: {len(indices)=}")
+            logger.debug(f"Processed {i+1} records: {len(col_indices)=}")
 
     # Create sparse matrix
     logger.debug("Creating sparse feature matrix")
