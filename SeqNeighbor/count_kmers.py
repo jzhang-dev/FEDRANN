@@ -114,13 +114,15 @@ def run_jellyfish(
 
 
 def _parse_kmer_searcher_output(filename: str):
-    with open(filename, "rb") as f:
+    with open(filename, "rb", buffering=1024 ** 3) as f:
         # 验证文件头
         header = f.read(16)
         if len(header) < 16:
             raise ValueError("文件头不完整")
 
         magic, version, reserved, total_records = struct.unpack("<4sB3sQ", header)
+        logger.debug(f"{total_records=}")
+        
         if magic != b"KMER":
             raise ValueError("无效的文件格式")
         if version != 1:
