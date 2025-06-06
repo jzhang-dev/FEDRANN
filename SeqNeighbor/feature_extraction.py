@@ -186,11 +186,12 @@ def get_feature_matrix_1(
         )
 
     # Get features
-    row_indices = array("L", [])  # uint32
+    data = array("I", [])  # uint32
     col_indices = array("Q", [])  # uint64
-    data = array("L", [])  # uint32
+    indptr = array("Q", [0])  # uint64
     read_names = []
     strands = []
+
 
     for i, (name, indices, counts, strand) in enumerate(
         get_kmer_features(
@@ -200,23 +201,27 @@ def get_feature_matrix_1(
             min_multiplicity=min_multiplicity,
         )
     ):
-        row_indices.extend([i] * len(indices))
-        col_indices.extend(indices)
         data.extend(counts)
+        col_indices.extend(indices)
+        indptr.append(len(data))
+
         read_names.append(name)
         strands.append(strand)
 
-        if (i+1) % 10000 == 0:
+        if (i+1) % 100000 == 0:
             logger.debug(f"Processed {i+1} records: {len(data)=}")
 
     # Create sparse matrix
     logger.debug("Creating sparse feature matrix")
-    n_rows = max(row_indices) + 1
-    n_cols = max(col_indices) + 1
+    data_array = np.frombuffer(data, dtype=np.uint32)
+    col_indices_array = np.frombuffer(col_indices, dtype=np.uint64)
+    indptr_array = np.frombuffer(indptr, dtype=np.uint64)
+    logger.debug(f"{data_array.shape=}, {col_indices_array.shape=}, {indptr_array.shape=}")
+
     feature_matrix = csr_matrix(
-        (data, (row_indices, col_indices)),
-        shape=(n_rows, n_cols),
+        (data_array, col_indices_array, indptr_array),
         dtype=np.uint32,
+        copy=False,
     )
 
     logger.debug(
