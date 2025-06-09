@@ -2,24 +2,20 @@
 
 set -exuo pipefail
 
+export PATH="$(pwd)/external/kmer_searcher/build/:$PATH"
+
 rm -rf test/output/
 mkdir -p test/output/
 
-SeqNeighbor encode \
-    -q test/data/reads.fasta.gz \
-    -t test/data/reads.fasta.gz \
-    -o test/output/feature_extraction \
-    -p IDF \
+./entrypoint.sh \
+    -i test/data/reads.fasta.gz \
+    -o test/output/ \
     -k 15 \
     --kmer-sample-fraction 0.05 \
-    --kmer-sample-seed 602 \
-    --kmer-min-multiplicity 2
+    --seed 602 \
+    --kmer-min-multiplicity 2 \
+    --dimension-reduction mpsrp \
+    --threads 2 \
+    --mprof
 
-
-SeqNeighbor qvt \
-    -i test/output/feature_extraction \
-    -d SparseRP \
-    -n 500 \
-    --knn-method NNDescent \
-    -o test/output/KNN \
-    --n-neighbors 20 
+#mprof plot --output test/output/mprof_plot.png test/output/mprof/memory_profile.dat

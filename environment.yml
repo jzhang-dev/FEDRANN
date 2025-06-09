@@ -5,17 +5,18 @@ channels:
   - defaults
 dependencies:
   - biopython
-  - colorlog
-  - pytorch::faiss-cpu==1.11.0
+  - anaconda::colorama
   - hnswlib==0.7.0
+  - bioconda::jellyfish
   - memory_profiler==0.61.0
-  - mmh3
   - networkx
   - nbconvert
   - nltk
   - notebook
+  - numba
   - numpy==1.26.4
   - pandas
+  - conda-forge::pyahocorasick == 2.1.0
   - pygraphviz
   - pynndescent==0.5.12
   - pysam==0.22.1
@@ -25,5 +26,6 @@ dependencies:
   - scanpy==1.10.1
   - scikit-learn==1.5.0
   - scipy
+  - bioconda::seqkit
   - bioconda::sharedmem
-  - xxhash
+  - python-xxhash==3.5.0

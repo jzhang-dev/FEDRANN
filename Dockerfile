@@ -1,33 +1,32 @@
-FROM ubuntu:24.10
+FROM continuumio/miniconda3:25.3.1-1
 
-USER root
 RUN apt-get update && apt-get install -y \
-    curl \
-    python3 \
-    python3-pip \
-    python3-venv \
+    build-essential \
     time \
     tzdata \
-    unzip \
     && apt-get clean \
     && apt-get purge \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-COPY requirements.txt /tmp/
-RUN python3 -m venv /opt/venv \
-    && /opt/venv/bin/pip install --upgrade pip \
-    && /opt/venv/bin/pip install --no-cache-dir --upgrade -r /tmp/requirements.txt
+COPY environment.yml /tmp/
+RUN conda env create -f /tmp/environment.yml --name default && \
+    conda clean -afy
+RUN conda init bash
+ENV PATH=/opt/conda/envs/default/bin:$PATH
 
-# 后续所有命令都用虚拟环境
-ENV PATH="/opt/venv/bin:$PATH"
-
-# 创建工作目录
-WORKDIR /workdir
+# Build kmer_searcher
+WORKDIR /app
+COPY . .
+WORKDIR /app/external/kmer_searcher/
+RUN bash ./build.sh
+ENV PATH=/app/external/kmer_searcher/build:$PATH
 
 # 安装 SeqNeighbor
-COPY . .
+WORKDIR /app
 RUN pip install --no-cache-dir .
 
+WORKDIR /workdir
+ENV NUMBA_CACHE_DIR=/tmp/numba_cache
 
 # 设置默认命令
-ENTRYPOINT [ "/workdir/entrypoint.sh" ]
+ENTRYPOINT [ "/app/entrypoint.sh" ]

@@ -14,6 +14,8 @@ from sklearn.decomposition import PCA as sklearn_PCA
 from sklearn.utils.extmath import safe_sparse_dot
 import sharedmem
 
+from .custom_logging import logger
+
 
 class _SpectralMatrixFree:
     """
@@ -111,8 +113,8 @@ class GaussianRandomProjection(_DimensionReduction):
 
 
 class SparseRandomProjection(_DimensionReduction):
-    def transform(self, data, n_dimensions: int):
-        reducer = random_projection.SparseRandomProjection(n_components=n_dimensions)
+    def transform(self, data, n_dimensions: int, seed: int = 4040):
+        reducer = random_projection.SparseRandomProjection(n_components=n_dimensions, random_state=seed, dense_output=True)
         embedding = reducer.fit_transform(data)
         return embedding
 
@@ -140,7 +142,7 @@ class mp_SparseRandomProjection:
 
         # build the CSR structure by concatenating the rows
         components = csr_matrix(
-            (data, indices, indptr), shape=(n_components, n_features)
+            (data, indices, indptr), shape=(n_components, n_features), dtype=np.float32
         )
         return np.sqrt(1 / density) / np.sqrt(n_components) * components
 
@@ -149,7 +151,7 @@ class mp_SparseRandomProjection:
         data: csr_matrix | NDArray,
         n_dimensions: int,
         density: float | str = "auto",
-        batch_size: int = 10000,
+        batch_size: int = 10_000,
         seed: int = 521022,
         threads: int = 1,
     ) -> NDArray:
@@ -168,20 +170,20 @@ class mp_SparseRandomProjection:
         )
 
         with sharedmem.MapReduce(np=threads) as pool:
+            embeddings = sharedmem.empty(
+                (data.shape[0], n_dimensions), dtype=random_matrix.dtype
+            )
             def work(i0):
                 batch_data = data[i0 : i0 + batch_size]
                 batch_embeddings = safe_sparse_dot(batch_data, random_matrix.T, dense_output=True)
-                return i0, batch_embeddings
-            
-            embeddings = np.zeros(
-                (data.shape[0], n_dimensions), dtype=random_matrix.dtype
-            )
-            def reduce(i0, batch_embeddings):
-                embeddings[i0 : i0 + batch_size] = batch_embeddings
+                with pool.critical:
+                    embeddings[i0 : i0 + batch_size] = batch_embeddings
 
-            pool.map(work, range(0, data.shape[0], batch_size), reduce=reduce)
+                return i0
 
-        assert isinstance(embeddings, np.ndarray)
+            pool.map(work, range(0, data.shape[0], batch_size))
+
+        embeddings = np.array(embeddings)
         return embeddings
 
 

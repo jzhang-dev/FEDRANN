@@ -1,26 +1,15 @@
 from dataclasses import dataclass, field
-import mmh3
-from functools import lru_cache
-import collections
 from typing import Sequence, Type, Mapping, Iterable, Literal
 from scipy import sparse
 from scipy.sparse._csr import csr_matrix
 import numpy as np
-from numpy import matlib, ndarray
 from numpy.typing import NDArray
 import sklearn.neighbors
 import pynndescent
 import hnswlib
-import faiss
 from math import ceil
-import pynear
 import time
-from sklearn.feature_extraction.text import TfidfTransformer
 from scipy.sparse._csr import csr_matrix
-from typing import Sequence, Type, Mapping, Literal
-from dataclasses import dataclass, field
-import numpy as np
-from numpy import ndarray
 
 
 
@@ -64,11 +53,11 @@ class ExactNearestNeighbors(_NearestNeighbors):
         return nbr_indices, nbr_distance
 
 
-class NNDescent(_NearestNeighbors):
+class NNDescent_qvt(_NearestNeighbors):
     def get_neighbors(
         self,
-        ref: np.ndarray,
-        que: np.ndarray,
+        target: np.ndarray,
+        query: np.ndarray,
         metric="cosine",
         n_neighbors: int = 20,
         *,
@@ -79,7 +68,7 @@ class NNDescent(_NearestNeighbors):
         verbose: bool = True,
     ):
         index = pynndescent.NNDescent(
-            ref,
+            target,
             metric=metric,
             n_neighbors=n_neighbors,
             n_trees=n_trees,
@@ -89,60 +78,51 @@ class NNDescent(_NearestNeighbors):
             verbose=verbose,
         )
 
-        nbr_indices, nbr_distance = index.query(que, k=n_neighbors)
+        nbr_indices, nbr_distance = index.query(query, k=n_neighbors)
 
         return nbr_indices, nbr_distance
 
 
-class ProductQuantization(_NearestNeighbors):
+class NNDescent_ava(_NearestNeighbors):
     def get_neighbors(
         self,
-        ref: np.ndarray,
-        que: np.ndarray,
-        n_neighbors: int,
-        metric: Literal["euclidean", "cosine"] = "euclidean",
+        data: csr_matrix | np.ndarray,
+        metric="cosine",
+        n_neighbors: int = 20,
         *,
-        threads: int = 64,
-        m=8,
-        nbits=8,
-        seed=455390,
+        index_n_neighbors:int=50,
+        n_trees: int| None = 300,
+        leaf_size: int| None = 200,
+        n_iters: int |None = None,
+        diversify_prob: float =1,
+        pruning_degree_multiplier:float =1.5,
+        low_memory: bool = True,
+        n_jobs: int | None = 64,
+        seed: int | None = 683985,
+        verbose: bool = True,
     ):
-
-        if sparse.issparse(ref) or sparse.issparse(que):
-            raise TypeError("ProductQuantization does not support sparse arrays.")
-        assert (
-            ref.shape[1] == que.shape[1]
-        ), "Reference and query data must have the same feature dimensions."
-
-        feature_count = ref.shape[1]
-        if feature_count % m != 0:
-            new_feature_count = feature_count // m * m
-            rng = np.random.default_rng(seed)
-            feature_indices = rng.choice(
-                feature_count, new_feature_count, replace=False, shuffle=False
+        if index_n_neighbors < n_neighbors:
+            raise ValueError(
+                f"index_n_neighbors ({index_n_neighbors}) must be greater than or equal to n_neighbors ({n_neighbors})"
             )
-            ref = ref[:, feature_indices]
-            que = que[:, feature_indices]
-        else:
-            new_feature_count = feature_count
-        faiss.omp_set_num_threads(threads)
-        if metric == "euclidean":
-            measure = faiss.METRIC_L2
-        else:
-            measure = faiss.METRIC_INNER_PRODUCT
-            ref = np.array(ref, order="C").astype("float32")
-            que = np.array(que, order="C").astype("float32")
-            faiss.normalize_L2(ref)
-            faiss.normalize_L2(que)
-
-        param = f"PQ{m}"
-        index = faiss.index_factory(new_feature_count, param, measure)
-
-        index.train(ref)
-        index.add(ref)
-
-        nbr_distances, nbr_indices = index.search(que, n_neighbors)
-        return nbr_indices, nbr_distances
+        index = pynndescent.NNDescent(
+            data,
+            metric=metric,
+            n_neighbors=index_n_neighbors,
+            n_trees=n_trees,
+            leaf_size=leaf_size,
+            n_iters=n_iters,
+            diversify_prob=diversify_prob,
+            pruning_degree_multiplier=pruning_degree_multiplier,
+            low_memory=low_memory,
+            n_jobs=n_jobs,
+            random_state=seed,
+            verbose=verbose,
+        )
+        assert index.neighbor_graph is not None
+        _nbr_indices, _ = index.neighbor_graph
+        nbr_indices = _nbr_indices[:,:n_neighbors]
+        return nbr_indices
 
 
 class HNSW(_NearestNeighbors):
@@ -180,47 +160,4 @@ class HNSW(_NearestNeighbors):
         return nbr_indices, nbr_distance
 
 
-class SimHash(_NearestNeighbors):
-    @staticmethod
-    def _get_hash_table(
-        feature_count: int, repeats: int, seed: int
-    ) -> NDArray[np.int8]:
-        rng = np.random.default_rng(seed)
-        hash_table = rng.integers(
-            0, 2, size=(feature_count, repeats * 8), dtype=np.int8
-        )
-        hash_table = hash_table * 2 - 1
-        return hash_table
 
-    @staticmethod
-    def get_simhash(
-        data: NDArray | csr_matrix, hash_table: NDArray
-    ) -> NDArray[np.uint8]:
-        simhash = data @ hash_table
-        binary_simhash = np.where(simhash > 0, 1, 0).astype(np.uint8)
-        packed_simhash = np.packbits(binary_simhash, axis=-1)
-        return packed_simhash
-
-    def get_neighbors(
-        self,
-        ref: np.ndarray,
-        que: np.ndarray,
-        n_neighbors: int,
-        threads: int = 10,
-        repeats=400,
-        seed=20141025,
-    ):
-        assert ref.shape != () and que.shape != ()
-        data = sparse.vstack([ref, que])
-        assert data.shape is not None
-        kmer_num = data.shape[1]
-        hash_table = self._get_hash_table(kmer_num, repeats=repeats, seed=seed)
-        simhash = self.get_simhash(data, hash_table)  # type: ignore
-        ref_sim = simhash[: ref.shape[0]]
-        que_sim = simhash[ref.shape[0] :]
-        vptree = pynear.VPTreeBinaryIndex()
-        vptree.set(ref_sim)
-        vptree_indices, vptree_distances = vptree.searchKNN(que_sim, n_neighbors + 1)
-        nbr_indices = np.array(vptree_indices)[:, :-1][:, ::-1]
-        nbr_distance = np.array(vptree_distances)[:, :-1][:, ::-1]
-        return nbr_indices, nbr_distance
