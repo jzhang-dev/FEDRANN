@@ -176,7 +176,8 @@ class mp_SparseRandomProjection:
             def work(i0):
                 batch_data = data[i0 : i0 + batch_size]
                 batch_embeddings = safe_sparse_dot(batch_data, random_matrix.T, dense_output=True)
-                embeddings[i0 : i0 + batch_size] = batch_embeddings
+                with pool.critical:
+                    embeddings[i0 : i0 + batch_size] = batch_embeddings
 
                 return i0
 
