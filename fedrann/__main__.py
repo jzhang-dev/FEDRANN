@@ -404,8 +404,6 @@ def main():
             mprof_file.flush()
     else:
         f()
-    logger.info("Complete.")
-
 
 if __name__ == "__main__":
     multiprocessing.set_start_method("spawn")
