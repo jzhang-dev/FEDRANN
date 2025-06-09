@@ -9,6 +9,7 @@ from typing import (
     Tuple,
 )
 import multiprocessing
+import subprocess
 import functools
 import gc
 import argparse
@@ -47,6 +48,29 @@ from .custom_logging import logger
 
 
 logger.setLevel(logging.DEBUG)
+
+
+def which(command):
+    """
+    Python implementation that calls system 'which' command.
+
+    Args:
+        command (str): The command to locate
+
+    Returns:
+        str: Full path to the executable if found, None otherwise
+    """
+    try:
+        result = subprocess.run(
+            ["which", command],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+            text=True,
+        )
+        return result.stdout.strip()
+    except subprocess.CalledProcessError:
+        return None
 
 
 def parse_command_line_arguments():
@@ -331,6 +355,9 @@ def main():
     globals.threads = args.threads
     globals.seed = args.seed
 
+    if not which("kmer_searcher"):
+        raise RuntimeError("Unable to find 'kmer_searcher' executable.")
+
     output_dir = abspath(args.output_dir)
     os.makedirs(output_dir, exist_ok=True)
     globals.output_dir = output_dir
@@ -344,29 +371,29 @@ def main():
     logger.debug(f"Output directory: {output_dir}")
 
     f: functools.partial[None] = functools.partial(
-            run_fedrann_pipeline,
-            input_path=args.input,
-            output_dir=output_dir,
-            kmer_size=args.kmer_size,
-            kmer_sample_fraction=args.kmer_sample_fraction,
-            kmer_min_multiplicity=args.kmer_min_multiplicity,
-            preprocess=args.preprocess,
-            embedding_dimension=args.embedding_dimension,
-            dimension_reduction=args.dimension_reduction,
-            knn=args.knn,
-            neighbor_count=args.neighbor_count,
-            nndescent_n_trees=args.nndescent_n_trees,
-        )
+        run_fedrann_pipeline,
+        input_path=args.input,
+        output_dir=output_dir,
+        kmer_size=args.kmer_size,
+        kmer_sample_fraction=args.kmer_sample_fraction,
+        kmer_min_multiplicity=args.kmer_min_multiplicity,
+        preprocess=args.preprocess,
+        embedding_dimension=args.embedding_dimension,
+        dimension_reduction=args.dimension_reduction,
+        knn=args.knn,
+        neighbor_count=args.neighbor_count,
+        nndescent_n_trees=args.nndescent_n_trees,
+    )
     if args.mprof:
         logger.debug("Memory profiling enabled. Running with memory profiler.")
-        mprof_dir = join(output_dir, 'mprof')
+        mprof_dir = join(output_dir, "mprof")
         os.makedirs(mprof_dir, exist_ok=True)
         mprof_output_path = join(mprof_dir, "memory_profile.dat")
 
-        with open(mprof_output_path, 'wt') as mprof_file:
+        with open(mprof_output_path, "wt") as mprof_file:
             memory_usage(
-                f, # type: ignore
-                backend='psutil',
+                f,  # type: ignore
+                backend="psutil",
                 interval=1,
                 multiprocess=True,
                 include_children=True,
@@ -378,6 +405,7 @@ def main():
     else:
         f()
     logger.info("Complete.")
+
 
 if __name__ == "__main__":
     multiprocessing.set_start_method("spawn")
