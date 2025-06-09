@@ -21,12 +21,12 @@ WORKDIR /app/kmer_searcher/
 RUN bash ./build.sh
 ENV PATH=/app/kmer_searcher/build:$PATH
 
-# 安装 SeqNeighbor
+# Install FEDRANN
 WORKDIR /app
 RUN pip install --no-cache-dir .
 
 WORKDIR /workdir
 ENV NUMBA_CACHE_DIR=/tmp/numba_cache
 
-# 设置默认命令
+# Set the entrypoint
 ENTRYPOINT [ "/app/entrypoint.sh" ]
