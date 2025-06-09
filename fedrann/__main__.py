@@ -15,7 +15,6 @@ import argparse
 from itertools import chain
 import os
 from os.path import join
-from math import floor, ceil
 from os.path import abspath, join, splitext
 import scipy as sp
 import pandas as pd
@@ -340,9 +339,9 @@ def main():
     os.makedirs(temp_dir, exist_ok=True)
     globals.temp_dir = temp_dir
 
-    logger.info(f"SeqNeighbor version: {__version__}")
-    logger.info(f"Input file: {args.input}")
-    logger.info(f"Output directory: {output_dir}")
+    logger.info(f"FEDRANN version: {__version__}")
+    logger.debug(f"Input file: {args.input}")
+    logger.debug(f"Output directory: {output_dir}")
 
     f: functools.partial[None] = functools.partial(
             run_fedrann_pipeline,
@@ -378,7 +377,7 @@ def main():
             mprof_file.flush()
     else:
         f()
-
+    logger.info("Complete.")
 
 if __name__ == "__main__":
     multiprocessing.set_start_method("spawn")

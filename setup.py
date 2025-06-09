@@ -1,5 +1,5 @@
 from setuptools import setup, find_packages
-from SeqNeighbor import __version__, __description__, __url__
+from fedrann import __version__, __description__, __url__
 
 with open('README.md') as f:
     long_description = f.read()
@@ -8,20 +8,20 @@ with open('requirements.txt') as f:
     required = [x for x in f.read().splitlines() if x]
 
 setup(
-    name='SeqNeighbor',
+    name='fedrann',
     version=__version__,
     packages=find_packages(),
-    author="",
-    author_email="",
+    author="Jia-Yuan Zhang, Changjiu Miao",
+    author_email="zhangjiayuan@genomics.cn, miaochangjiu@genomics.cn",
     description=__description__,
     long_description=long_description,
     url=__url__,
     entry_points={
         'console_scripts': [
-            'SeqNeighbor = SeqNeighbor.__main__:main',
+            'fedrann = fedrann.__main__:main',
         ],
     },
-    package_data={'SeqNeighbor':  ['default.yaml']},
+    package_data={'fedrann':  []},
     classifiers=[
         # Trove classifiers
         # Full list at https://pypi.python.org/pypi?%3Aaction=list_classifiers
