@@ -1,3 +1,6 @@
 [submodule "external/kmer_searcher"]
 	path = external/kmer_searcher
 	url = git@github.com:CycloneSEQ-Bioinformatics/kmer_searcher.git
+[submodule "external/robin-hood-hashing"]
+	path = external/robin-hood-hashing
+	url = git@github.com:martinus/robin-hood-hashing.git
