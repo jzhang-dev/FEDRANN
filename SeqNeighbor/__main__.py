@@ -9,6 +9,7 @@ from typing import (
     Tuple,
 )
 import multiprocessing
+import functools
 import gc
 import argparse
 from itertools import chain
@@ -19,8 +20,7 @@ from os.path import abspath, join, splitext
 import scipy as sp
 import pandas as pd
 from scipy.sparse._csr import csr_matrix
-import json, pickle
-import numpy as np
+from memory_profiler import memory_usage
 from numpy.typing import NDArray
 import logging
 
@@ -145,6 +145,12 @@ def parse_command_line_arguments():
         default=356115,
         help="Random seed for reproducibility.",
     )
+    parser.add_argument(
+        "--mprof",
+        action="store_true",
+        default=False,
+        help="Record memory usage.",
+    )
 
     # 解析参数
     args = parser.parse_args()
@@ -165,7 +171,9 @@ def compute_dimension_reduction(
     feature_matrix: csr_matrix, embedding_dimension: int, method: str
 ) -> NDArray:
     if method.lower() == "mpsrp":
-        logger.info("Using multiprocess Sparse Random Projection for dimensionality reduction.")
+        logger.info(
+            "Using multiprocess Sparse Random Projection for dimensionality reduction."
+        )
         seed = globals.seed + 5599
         embeddings = mp_SparseRandomProjection().transform(
             data=feature_matrix,
@@ -188,10 +196,16 @@ def compute_dimension_reduction(
 
 
 def get_neighbors_ava(
-    embedding_matrix: NDArray, method: str, neighbor_count: int, nndescent_n_trees: int, leaf_size: int = 200
+    embedding_matrix: NDArray,
+    method: str,
+    neighbor_count: int,
+    nndescent_n_trees: int,
+    leaf_size: int = 200,
 ) -> NDArray:
     if method.lower() == "nndescent":
-        logger.info(f"Using NNDescent method to find nearest neighbors (n_trees = {nndescent_n_trees}, left_size = {leaf_size})")
+        logger.info(
+            f"Using NNDescent method to find nearest neighbors (n_trees = {nndescent_n_trees}, left_size = {leaf_size})"
+        )
         neighbor_indices = NNDescent_ava().get_neighbors(
             embedding_matrix,
             metric="cosine",
@@ -253,8 +267,68 @@ def get_output_dataframe(
     return df
 
 
+def run_fedrann_pipeline(
+    input_path: str,
+    output_dir: str,
+    kmer_size: int,
+    kmer_sample_fraction: float,
+    kmer_min_multiplicity: int,
+    preprocess: str,
+    embedding_dimension: int,
+    dimension_reduction: str,
+    knn: str,
+    neighbor_count: int,
+    nndescent_n_trees: int,
+):
+    """
+    Run the SeqNeighbor pipeline with the specified parameters.
+    """
+    # Extract features
+    logger.info("--- 1. Feature Extraction ---")
+    feature_matrix, read_names, strands = get_feature_matrix_1(
+        input_path=input_path,
+        k=kmer_size,
+        sample_fraction=kmer_sample_fraction,
+        min_multiplicity=kmer_min_multiplicity,
+    )
+
+    # Preprocess features
+    feature_matrix = get_feature_weights(feature_matrix, preprocess)
+
+    # Dimensionality reduction
+    logger.info("--- 2. Dimensionality Reduction ---")
+    embedding_matrix = compute_dimension_reduction(
+        feature_matrix,
+        embedding_dimension=embedding_dimension,
+        method=dimension_reduction,
+    )
+    del feature_matrix
+    gc.collect()
+
+    # Nearest neighbors search
+    logger.info("--- 3. Nearest Neighbors Search ---")
+    neighbor_matrix = get_neighbors_ava(
+        embedding_matrix,
+        method=knn,
+        neighbor_count=neighbor_count,
+        nndescent_n_trees=nndescent_n_trees,
+    )
+    del embedding_matrix
+    gc.collect()
+
+    # Save output
+    output_file = join(output_dir, "overlaps.tsv")
+    df = get_output_dataframe(
+        neighbor_matrix=neighbor_matrix, read_names=read_names, strands=strands
+    )
+    df.to_csv(output_file, sep="\t", index=False)
+
+    logger.info(f"Pipeline completed. Output saved to {output_file}")
+
+
 def main():
     args = parse_command_line_arguments()
+
     globals.threads = args.threads
     globals.seed = args.seed
 
@@ -270,42 +344,40 @@ def main():
     logger.info(f"Input file: {args.input}")
     logger.info(f"Output directory: {output_dir}")
 
-    logger.info("Starting feature extraction")
-    feature_matrix, read_names, strands = get_feature_matrix_1(
-        input_path=args.input,
-        k=args.kmer_size,
-        sample_fraction=args.kmer_sample_fraction,
-        min_multiplicity=args.kmer_min_multiplicity,
-    )
+    f: functools.partial[None] = functools.partial(
+            run_fedrann_pipeline,
+            input_path=args.input,
+            output_dir=output_dir,
+            kmer_size=args.kmer_size,
+            kmer_sample_fraction=args.kmer_sample_fraction,
+            kmer_min_multiplicity=args.kmer_min_multiplicity,
+            preprocess=args.preprocess,
+            embedding_dimension=args.embedding_dimension,
+            dimension_reduction=args.dimension_reduction,
+            knn=args.knn,
+            neighbor_count=args.neighbor_count,
+            nndescent_n_trees=args.nndescent_n_trees,
+        )
+    if args.mprof:
+        logger.debug("Memory profiling enabled. Running with memory profiler.")
+        mprof_dir = join(output_dir, 'mprof')
+        os.makedirs(mprof_dir, exist_ok=True)
+        mprof_output_path = join(mprof_dir, "memory_profile.dat")
 
-    feature_matrix = get_feature_weights(feature_matrix, args.preprocess)
-
-    logger.info("Starting dimensionality reduction")
-    embedding_matrix = compute_dimension_reduction(
-        feature_matrix,
-        embedding_dimension=args.embedding_dimension,
-        method=args.dimension_reduction,
-    )
-    del feature_matrix
-    gc.collect()
-
-    logger.info("Computing nearest neighbors")
-    neighbor_matrix = get_neighbors_ava(
-        embedding_matrix,
-        method=args.knn,
-        neighbor_count=args.neighbor_count,
-        nndescent_n_trees=args.nndescent_n_trees,
-    )
-    del embedding_matrix
-    gc.collect()
-
-    logger.info("Saving output")
-    output_file = join(output_dir, "overlaps.tsv")
-    df = get_output_dataframe(
-        neighbor_matrix=neighbor_matrix, read_names=read_names, strands=strands
-    )
-    df.to_csv(output_file, sep="\t", index=False)
-    logger.info(f"Output saved to {output_file}")
+        with open(mprof_output_path, 'wt') as mprof_file:
+            memory_usage(
+                f, # type: ignore
+                backend='psutil',
+                interval=1,
+                multiprocess=True,
+                include_children=True,
+                timestamps=True,
+                stream=mprof_file,
+                max_usage=False,
+            )
+            mprof_file.flush()
+    else:
+        f()
 
 
 if __name__ == "__main__":
