@@ -44,7 +44,7 @@ from .nearest_neighbors import (
     HNSW,
 )
 from . import globals
-from .custom_logging import logger
+from .custom_logging import logger, add_log_file
 
 
 logger.setLevel(logging.DEBUG)
@@ -361,6 +361,9 @@ def main():
     output_dir = abspath(args.output_dir)
     os.makedirs(output_dir, exist_ok=True)
     globals.output_dir = output_dir
+
+    logfile = join(output_dir, "fedrann.log")
+    add_log_file(logfile)
 
     temp_dir = join(output_dir, "temp")
     os.makedirs(temp_dir, exist_ok=True)
