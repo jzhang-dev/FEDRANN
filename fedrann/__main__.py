@@ -372,6 +372,7 @@ def main():
     logger.info(f"FEDRANN version: {__version__}")
     logger.debug(f"Input file: {args.input}")
     logger.debug(f"Output directory: {output_dir}")
+    logger.debug(f"Parameters: {args}")
 
     f: functools.partial[None] = functools.partial(
         run_fedrann_pipeline,
