@@ -53,42 +53,12 @@ class ExactNearestNeighbors(_NearestNeighbors):
         return nbr_indices, nbr_distance
 
 
-class NNDescent_qvt(_NearestNeighbors):
-    def get_neighbors(
-        self,
-        target: np.ndarray,
-        query: np.ndarray,
-        metric="cosine",
-        n_neighbors: int = 20,
-        *,
-        n_trees: int = 100,
-        low_memory: bool = True,
-        threads: int | None = None,
-        seed: int | None = 683985,
-        verbose: bool = True,
-    ):
-        index = pynndescent.NNDescent(
-            target,
-            metric=metric,
-            n_neighbors=n_neighbors,
-            n_trees=n_trees,
-            low_memory=low_memory,
-            n_jobs=threads,
-            random_state=seed,
-            verbose=verbose,
-        )
-
-        nbr_indices, nbr_distance = index.query(query, k=n_neighbors)
-
-        return nbr_indices, nbr_distance
-
 
 class NNDescent_ava(_NearestNeighbors):
     def get_neighbors(
         self,
         data: csr_matrix | np.ndarray,
         metric="cosine",
-        n_neighbors: int = 20,
         *,
         index_n_neighbors:int=50,
         n_trees: int| None = 300,
@@ -101,10 +71,6 @@ class NNDescent_ava(_NearestNeighbors):
         seed: int | None = 683985,
         verbose: bool = True,
     ):
-        if index_n_neighbors < n_neighbors:
-            raise ValueError(
-                f"index_n_neighbors ({index_n_neighbors}) must be greater than or equal to n_neighbors ({n_neighbors})"
-            )
         index = pynndescent.NNDescent(
             data,
             metric=metric,
@@ -120,9 +86,8 @@ class NNDescent_ava(_NearestNeighbors):
             verbose=verbose,
         )
         assert index.neighbor_graph is not None
-        _nbr_indices, _ = index.neighbor_graph
-        nbr_indices = _nbr_indices[:,:n_neighbors]
-        return nbr_indices
+        nbr_indices, distances = index.neighbor_graph
+        return nbr_indices, distances
 
 
 class HNSW(_NearestNeighbors):
