@@ -157,6 +157,12 @@ def parse_command_line_arguments():
         help="Number of trees to use in NNDescent.",
     )
     parser.add_argument(
+        "--nndescent-n-neighbors",
+        type=int,
+        default=50,
+        help="Number of neighbors to use in building NNDescent index.",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         required=False,
@@ -217,6 +223,7 @@ def get_neighbors_ava(
     embedding_matrix: NDArray,
     method: str,
     nndescent_n_trees: int,
+    nndescent_n_neighbors: int,
     leaf_size: int = 200,
 ) -> tuple[NDArray, NDArray]:
     if method.lower() == "nndescent":
@@ -226,7 +233,7 @@ def get_neighbors_ava(
         neighbor_indices, distances = NNDescent_ava().get_neighbors(
             embedding_matrix,
             metric="cosine",
-            index_n_neighbors=50,
+            index_n_neighbors=nndescent_n_neighbors,
             n_trees=nndescent_n_trees,
             leaf_size=leaf_size,
             n_iters=None,
@@ -251,40 +258,44 @@ def get_neighbor_table(
 ) -> pd.DataFrame:
     """
     Convert neighbor matrix and distance matrix into a DataFrame of neighbor pairs.
-    
+
     Args:
         neighbor_matrix: 2D array where each row contains indices of neighbors
         neighbor_distances: 2D array with corresponding distances to neighbors
-        
+
     Returns:
         DataFrame with columns: query_index, target_index, distance, rank
     """
     # Get shapes and validate inputs
     n_queries, n_neighbors = neighbor_matrix.shape
     if neighbor_distances.shape != (n_queries, n_neighbors):
-        raise ValueError("neighbor_matrix and neighbor_distances must have the same shape")
-    
+        raise ValueError(
+            "neighbor_matrix and neighbor_distances must have the same shape"
+        )
+
     # Create query indices (repeated for each neighbor)
     query_indices = np.repeat(np.arange(n_queries), n_neighbors)
-    
+
     # Flatten neighbor matrix and distances
     target_indices = neighbor_matrix.ravel()
     distances = neighbor_distances.ravel()
-    
+
     # Create ranks (0 to n_neighbors-1 repeated for each query)
     ranks = np.tile(np.arange(n_neighbors), n_queries)
-    
+
     # Filter out self-matches (where query_index == target_index)
     mask = query_indices != target_indices
-    
+
     # Create DataFrame from filtered arrays
-    nbr_df = pd.DataFrame({
-        'query_index': query_indices[mask],
-        'target_index': target_indices[mask],
-        'distance': distances[mask],
-        'rank': ranks[mask]
-    })
-    
+    nbr_df = pd.DataFrame(
+        {
+            "query_index": query_indices[mask],
+            "target_index": target_indices[mask],
+            "distance": distances[mask],
+            "rank": ranks[mask],
+        }
+    )
+
     return nbr_df
 
 
@@ -293,7 +304,7 @@ def get_metadata_table(
     strands: Sequence[int],
 ) -> pd.DataFrame:
     metadata = {
-        'index': np.arange(len(read_names)),
+        "index": np.arange(len(read_names)),
         "read_name": read_names,
         "strand": strands,
     }
@@ -312,6 +323,7 @@ def run_fedrann_pipeline(
     dimension_reduction: str,
     knn: str,
     nndescent_n_trees: int,
+    nndescent_n_neighbors: int,
 ):
     """
     Run the SeqNeighbor pipeline with the specified parameters.
@@ -355,6 +367,7 @@ def run_fedrann_pipeline(
         embedding_matrix,
         method=knn,
         nndescent_n_trees=nndescent_n_trees,
+        nndescent_n_neighbors=nndescent_n_neighbors,
     )
     del embedding_matrix
     gc.collect()
@@ -411,6 +424,7 @@ def main():
         dimension_reduction=args.dimension_reduction,
         knn=args.knn,
         nndescent_n_trees=args.nndescent_n_trees,
+        nndescent_n_neighbors=args.nndescent_n_neighbors,
     )
     if args.mprof:
         logger.debug("Memory profiling enabled. Running with memory profiler.")
