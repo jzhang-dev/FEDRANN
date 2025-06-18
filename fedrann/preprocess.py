@@ -11,7 +11,7 @@ def tf_transform(feature_matrix: csr_matrix):
     return feature_matrix
 
 
-def idf_transform(feature_matrix: csr_matrix, idf=None):
+def idf_transform(feature_matrix: csr_matrix, idf=None, *, chunk_size=int(1e9)):
     if idf is None:
         # Memory-efficient column sum
         logger.debug("Calculating column sum.")
@@ -22,10 +22,16 @@ def idf_transform(feature_matrix: csr_matrix, idf=None):
         logger.debug("Calculating IDF")
         idf = np.log(nrow / (col_sums.astype(np.float32) + 1e-12)).astype(np.float32)
     
-    # Sparse matrix multiplication (memory-efficient)
     logger.debug("Applying IDF transformation")
-    idf_diag = diags(idf, format='csc')
-    feature_matrix.sort_indices()
-    feature_matrix = feature_matrix.dot(idf_diag)
+    data = feature_matrix.data
+    indices = feature_matrix.indices
+
+    for i in range(0, len(data), chunk_size):
+        end_idx = min(i+chunk_size, len(data))
+        chunk = data[i:end_idx]
+        data[i:end_idx] = chunk * idf[indices[i:end_idx]]
+
+        progress = (end_idx / len(data))
+        logger.debug(f"Progress: {progress:.2%}")
     
     return feature_matrix, idf
