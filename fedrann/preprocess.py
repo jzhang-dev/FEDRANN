@@ -35,7 +35,8 @@ def idf_transform(feature_matrix: csr_matrix, idf=None, *, threads: int = 1, chu
             chunk_data = data[i0:end_idx]
             chunk_indices = indices[i0:end_idx]
             transformed_chunk = chunk_data * idf[chunk_indices]
-            transformed_data[i0:end_idx] = transformed_chunk
+            with pool.critical:
+                transformed_data[i0:end_idx] = transformed_chunk
             return i0
         
         def reduce(i0):
