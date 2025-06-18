@@ -12,7 +12,7 @@ def tf_transform(feature_matrix: csr_matrix):
     return feature_matrix
 
 
-def idf_transform(feature_matrix: csr_matrix, idf=None, *, threads: int = 1, chunk_size=int(100e6)):
+def idf_transform(feature_matrix: csr_matrix, idf=None, *, threads: int = 1, chunk_size=int(0.1e9)):
     if idf is None:
         # Memory-efficient column sum
         logger.debug("Calculating column sum.")
@@ -26,26 +26,30 @@ def idf_transform(feature_matrix: csr_matrix, idf=None, *, threads: int = 1, chu
     logger.debug("Applying IDF transformation")
     data = feature_matrix.data
     indices = feature_matrix.indices
+    nnz_count = len(data)
+    if nnz_count == 0:
+        raise ValueError("Feature matrix is empty, cannot apply IDF transformation.")
 
     with sharedmem.MapReduce(np=threads) as pool:
-        transformed_data = sharedmem.empty(len(data), dtype=np.float32) # type: ignore
+        transformed_data = sharedmem.empty(nnz_count, dtype=np.float32) # type: ignore
 
         def work(i0):
-            end_idx = min(i0 + chunk_size, len(data))
+            end_idx = min(i0 + chunk_size, nnz_count)
             chunk_data = data[i0:end_idx]
             chunk_indices = indices[i0:end_idx]
             transformed_chunk = chunk_data * idf[chunk_indices]
             with pool.critical:
                 transformed_data[i0:end_idx] = transformed_chunk
-            return i0
+            actual_chunk_size = end_idx - i0
+            return actual_chunk_size
         
-        def reduce(i0):
-            end_idx = min(i0 + chunk_size, len(data))
-            progress = (end_idx / len(data))
+        processed_count = 0
+        def reduce(count):
+            nonlocal processed_count
+            progress = (processed_count / nnz_count)
             logger.debug(f"Progress: {progress:.2%}")
-            return i0
         
-        pool.map(work, range(0, len(data), chunk_size), reduce=reduce)
+        pool.map(work, range(0, nnz_count, chunk_size), reduce=reduce)
     
     feature_matrix.data = transformed_data
 

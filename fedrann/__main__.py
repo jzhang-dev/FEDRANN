@@ -185,7 +185,7 @@ def get_feature_weights(feature_matrix: csr_matrix, method: str) -> csr_matrix:
     logger.debug(f"Applying preprocessing method {method!r} to feature matrix.")
 
     if method == "IDF":
-        feature_matrix, _ = idf_transform(feature_matrix)
+        feature_matrix, _ = idf_transform(feature_matrix, threads=globals.threads)
     else:
         raise ValueError()
     return feature_matrix

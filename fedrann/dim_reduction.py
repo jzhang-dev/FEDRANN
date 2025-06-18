@@ -151,7 +151,7 @@ class mp_SparseRandomProjection:
         data: csr_matrix | NDArray,
         n_dimensions: int,
         density: float | str = "auto",
-        batch_size: int = 100_000,
+        chunk_size: int = 100_000,
         seed: int = 521022,
         threads: int = 1,
     ) -> NDArray:
@@ -168,20 +168,28 @@ class mp_SparseRandomProjection:
             density=_density,
             seed=seed,
         )
+        row_count = data.shape[0]
 
         with sharedmem.MapReduce(np=threads) as pool:
             embeddings = sharedmem.empty(
-                (data.shape[0], n_dimensions), dtype=random_matrix.dtype
+                (row_count, n_dimensions), dtype=random_matrix.dtype
             )
             def work(i0):
-                batch_data = data[i0 : i0 + batch_size]
-                batch_embeddings = safe_sparse_dot(batch_data, random_matrix.T, dense_output=True)
+                chunk_data = data[i0 : i0 + chunk_size]
+                chunk_embeddings = safe_sparse_dot(chunk_data, random_matrix.T, dense_output=True)
                 with pool.critical:
-                    embeddings[i0 : i0 + batch_size] = batch_embeddings
+                    embeddings[i0 : i0 + chunk_size] = chunk_embeddings
+                actual_chunk_size = chunk_data.shape[0]
+                return actual_chunk_size
+            
+            processed_count = 0
+            def reduce(actual_chunk_size):
+                nonlocal processed_count
+                processed_count += actual_chunk_size
+                progress = (processed_count / row_count)
+                logger.debug(f"Progress: {progress:.2%}")
 
-                return i0
-
-            pool.map(work, range(0, data.shape[0], batch_size))
+            pool.map(work, range(0, row_count, chunk_size), reduce=reduce)
 
         embeddings = np.array(embeddings)
         return embeddings
