@@ -44,9 +44,10 @@ def idf_transform(feature_matrix: csr_matrix, idf=None, *, threads: int = 1, chu
             return actual_chunk_size
         
         processed_count = 0
-        def reduce(count):
+        def reduce(actual_chunk_size):
             nonlocal processed_count
-            progress = (processed_count / nnz_count)
+            processed_count += actual_chunk_size
+            progress = processed_count / nnz_count
             logger.debug(f"Progress: {progress:.2%}")
         
         pool.map(work, range(0, nnz_count, chunk_size), reduce=reduce)

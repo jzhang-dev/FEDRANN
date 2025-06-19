@@ -30,6 +30,7 @@ from numpy.typing import NDArray
 import pysam
 
 from .custom_logging import logger
+from . import globals
 
 
 T = TypeVar("T")
@@ -100,6 +101,7 @@ class FastxRecord(NamedTuple):
     name: str
     sequence: str
     orientation: int = 0
+
 
 def get_reverse_complement_record(record: FastxRecord) -> FastxRecord:
     """
@@ -181,22 +183,25 @@ class FastaLoader(_DataLoader[FastxRecord]):
                 yield self._parse_item(item)
 
 
-
 def convert_fastq_to_fasta(fastq_path: str, fasta_path: str) -> None:
     """
     Convert a FASTQ file to a FASTA file.
     """
     seqkit_command = [
-        "seqkit", "seq",
+        "seqkit",
+        "seq",
         "-f",  # FASTA output
         fastq_path,
-        "-o", fasta_path
+        "-o",
+        fasta_path,
     ]
     logger.debug(f"Running seqkit command: {' '.join(seqkit_command)}")
     subprocess.run(seqkit_command, check=True)
     if not isfile(fasta_path):
-        raise RuntimeError(f"Failed to convert FASTQ to FASTA: {fasta_path} not found after conversion.")
-    
+        raise RuntimeError(
+            f"Failed to convert FASTQ to FASTA: {fasta_path} not found after conversion."
+        )
+
 
 def unzip(input_path: str, output_path: str) -> None:
     """
@@ -204,23 +209,32 @@ def unzip(input_path: str, output_path: str) -> None:
     """
     if not input_path.endswith(".gz"):
         raise ValueError(f"Input path {input_path} is not a gzipped file.")
-    
+
     logger.debug(f"Unzipping {input_path} to {output_path}")
-    gunzip_command = ["gunzip", "-c", input_path]
+    unzip_command = [
+        "pigz",
+        "-p",
+        str(globals.threads),
+        "--decompress",
+        "--stdout",
+        input_path,
+    ]
     with open(output_path, "wb") as out_f:
-        subprocess.run(gunzip_command, stdout=out_f, check=True)
+        subprocess.run(unzip_command, stdout=out_f, check=True)
     if not isfile(output_path):
-        raise RuntimeError(f"Failed to unzip {input_path}: {output_path} not found after unzipping.")
-    
+        raise RuntimeError(
+            f"Failed to unzip {input_path}: {output_path} not found after unzipping."
+        )
+
 
 def make_fasta_index(file_path: str, index_path: Optional[str] = None) -> None:
     """
     创建 FASTA 文件的索引。
-    
+
     参数：
         file_path: FASTA 文件路径
         index_path: 索引文件路径，默认为 file_path + ".fai"
-    
+
     异常：
         如果索引文件已存在，则抛出 FileExistsError
     """

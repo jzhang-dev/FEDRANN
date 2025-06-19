@@ -12,6 +12,7 @@ import multiprocessing
 import subprocess
 import functools
 import gc
+from shutil import rmtree
 import argparse
 from itertools import chain
 import os
@@ -28,7 +29,7 @@ import logging
 from . import __version__, __description__
 
 from .feature_extraction import (
-    get_feature_matrix_1,
+    get_feature_matrix,
 )
 from .preprocess import tf_transform, idf_transform
 from .dim_reduction import (
@@ -168,6 +169,12 @@ def parse_command_line_arguments():
         required=False,
         default=356115,
         help="Random seed for reproducibility.",
+    )
+    parser.add_argument(
+        "--keep-intermediates",
+        action="store_true",
+        default=False,
+        help="Do not remove intermediate files",
     )
     parser.add_argument(
         "--mprof",
@@ -313,6 +320,7 @@ def get_metadata_table(
 
 
 def run_fedrann_pipeline(
+    *,
     input_path: str,
     output_dir: str,
     kmer_size: int,
@@ -324,13 +332,14 @@ def run_fedrann_pipeline(
     knn: str,
     nndescent_n_trees: int,
     nndescent_n_neighbors: int,
+    keep_intermediates: bool,
 ):
     """
     Run the SeqNeighbor pipeline with the specified parameters.
     """
     # Extract features
     logger.info("--- 1. Feature Extraction ---")
-    feature_matrix, read_names, strands = get_feature_matrix_1(
+    feature_matrix, read_names, strands = get_feature_matrix(
         input_path=input_path,
         k=kmer_size,
         sample_fraction=kmer_sample_fraction,
@@ -384,6 +393,10 @@ def run_fedrann_pipeline(
     gc.collect()
     nbr_df.to_csv(nbr_output_file, sep="\t", index=False)
 
+    if not keep_intermediates:
+        logger.debug("Removing intermediate files")
+        rmtree(globals.temp_dir)
+        
     logger.info(f"Pipeline completed.")
 
 
@@ -425,6 +438,7 @@ def main():
         knn=args.knn,
         nndescent_n_trees=args.nndescent_n_trees,
         nndescent_n_neighbors=args.nndescent_n_neighbors,
+        keep_intermediates=args.keep_intermediates,
     )
     if args.mprof:
         logger.debug("Memory profiling enabled. Running with memory profiler.")
