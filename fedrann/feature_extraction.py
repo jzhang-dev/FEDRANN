@@ -14,6 +14,8 @@ from numba import njit
 import ahocorasick
 import sharedmem
 
+
+
 from .fastx_io import (
     FastqLoader,
     FastaLoader,
@@ -143,7 +145,7 @@ def get_feature_matrix_1(
     # Convert FASTQ to FASTA
     if input_unzipped_path.endswith(".fastq") or input_unzipped_path.endswith(".fq"):
         input_fasta_path = join(globals.temp_dir, "input.fasta")
-        convert_fastq_to_fasta(input_unzipped_path, input_fasta_path)
+        convert_fastq_to_fasta(input_unzipped_path, input_fasta_path, globals.threads)
     elif input_unzipped_path.endswith(".fasta") or input_unzipped_path.endswith(".fa"):
         input_fasta_path = input_unzipped_path
     else:
@@ -151,34 +153,15 @@ def get_feature_matrix_1(
             "Unsupported file format. Please provide a FASTA or FASTQ file."
         )
 
-    # Get features
-    col_indices = array("Q", [])  # uint64
-    indptr = array("Q", [0])  # uint64
-    read_names = []
-    strands = []
-
-
-    for i, (name, indices, strand) in enumerate(
-        get_kmer_features(
+    data_array, col_indices_array, indptr_array, strands, read_names = get_kmer_features(
             input_fasta_path,
             k=k,
             sample_fraction=sample_fraction,
             min_multiplicity=min_multiplicity,
         )
-    ):
-        col_indices.extend(indices)
-        indptr.append(len(col_indices))
-        read_names.append(name)
-        strands.append(strand)
-
-        if (i+1) % 100000 == 0:
-            logger.debug(f"Processed {i+1} records: {len(col_indices)=}")
 
     # Create sparse matrix
     logger.debug("Creating sparse feature matrix")
-    col_indices_array = np.frombuffer(col_indices, dtype=np.uint64)
-    data_array = np.ones_like(col_indices_array, dtype=np.float32)
-    indptr_array = np.frombuffer(indptr, dtype=np.uint64)
     logger.debug(f"{data_array.shape=}, {col_indices_array.shape=}, {indptr_array.shape=}")
 
     feature_matrix = csr_matrix(

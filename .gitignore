@@ -167,3 +167,4 @@ test/output/
 # Snakemake
 .snakemake/
 
+.vscode

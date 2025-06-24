@@ -8,6 +8,9 @@ from typing import Generator, Tuple, Optional, Iterable
 import struct
 from collections import namedtuple
 from typing import Iterator
+from array import array
+import numpy as np
+import os
 
 from .custom_logging import logger
 from . import globals
@@ -113,6 +116,21 @@ def run_jellyfish(
     return AsyncJellyfishResult(temp_dir, future)
 
 
+
+
+
+def count_lines(filename):
+    """使用 wc -l 命令统计行数"""
+    result = subprocess.run(
+        ["wc", "-l", filename],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"wc failed: {result.stderr}")
+    return int(result.stdout.split()[0])
+
 def _parse_kmer_searcher_output(filename: str):
     with open(filename, "rb", buffering=1024 ** 3) as f:
         header = f.read(16)
@@ -144,17 +162,28 @@ def _parse_kmer_searcher_output(filename: str):
             yield id_str, indices
 
 
-def count_lines(filename):
-    """使用 wc -l 命令统计行数"""
-    result = subprocess.run(
-        ["wc", "-l", filename],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"wc failed: {result.stderr}")
-    return int(result.stdout.split()[0])
+def kmer_searcher_from_bin(
+        fwd_kmer_library_path:str, rev_kmer_library_path:str, fasta_path:str, kmer_count: int, k:int
+):
+
+    kmer_searcher_output_dir = join(globals.temp_dir, "kmer_searcher")
+
+    command = f"cat {fwd_kmer_library_path} {rev_kmer_library_path} | grep -v '^>' | kmer_searcher /dev/stdin {fasta_path} {kmer_searcher_output_dir} {k} {globals.threads}"
+    logger.debug(f"Searching kmers for forward strands: {command}")
+    subprocess.run(command, shell=True, check=True)
+
+    logger.debug("Parsing kmer_searcher output")
+    kmer_searcher_output_path = join(kmer_searcher_output_dir, "output.bin")
+    if not isfile(kmer_searcher_output_path):
+        raise RuntimeError(
+            f"kmer_searcher output file not found: {kmer_searcher_output_path}"
+        )
+    for name, indices in _parse_kmer_searcher_output(kmer_searcher_output_path):
+        yield name, indices, 0
+        rev_indices = [
+            i + kmer_count if i < kmer_count else i - kmer_count for i in indices
+        ]
+        yield name, rev_indices, 1
 
 
 def get_kmer_features(
@@ -218,22 +247,44 @@ def get_kmer_features(
     command = f"seqkit seq -r -p -t DNA -j {globals.threads} {fwd_kmer_library_path} > {rev_kmer_library_path}"
     logger.debug(f"Creating reverse complement for kmer library: {command}")
     subprocess.run(command, shell=True, check=True)
+    
+    logger.debug(f"Loading kmers from fasta {fasta_path}")
+    col_indices = array("Q", [])  # uint64
+    indptr = array("Q", [0])  # uint64
+    read_names = []
+    strands = []
+    if False:
+        for i, (name, indices, strand) in enumerate(
+            kmer_searcher_from_bin(fwd_kmer_library_path, rev_kmer_library_path, fasta_path, kmer_count, k)
+        ):
+            col_indices.extend(indices)
+            indptr.append(len(col_indices))
+            read_names.append(name)
+            strands.append(strand)
+    else:
 
-    kmer_searcher_output_dir = join(globals.temp_dir, "kmer_searcher")
+        from Kmer_searcher import PyKmerSearcher
 
-    command = f"cat {fwd_kmer_library_path} {rev_kmer_library_path} | grep -v '^>' | kmer_searcher /dev/stdin {fasta_path} {kmer_searcher_output_dir} {k} {globals.threads}"
-    logger.debug(f"Searching kmers for forward strands: {command}")
-    subprocess.run(command, shell=True, check=True)
+        searcher = PyKmerSearcher(k=k)
+        searcher.load_kmer_libs(fwd_kmer_library_path, rev_kmer_library_path)
+        searcher.process_sequences(fasta_path, num_threads=globals.threads)
+        results = searcher.get_results()
+        
+        for seq_id, indices in results:
+            col_indices.extend(indices)
+            indptr.append(len(col_indices))
+            read_names.append(seq_id)
+            strands.append(0)
 
-    logger.debug("Parsing kmer_searcher output")
-    kmer_searcher_output_path = join(kmer_searcher_output_dir, "output.bin")
-    if not isfile(kmer_searcher_output_path):
-        raise RuntimeError(
-            f"kmer_searcher output file not found: {kmer_searcher_output_path}"
-        )
-    for name, indices in _parse_kmer_searcher_output(kmer_searcher_output_path):
-        yield name, indices, 0
-        rev_indices = [
-            i + kmer_count if i < kmer_count else i - kmer_count for i in indices
-        ]
-        yield name, rev_indices, 1
+            rev_indices = [
+                i + kmer_count if i < kmer_count else i - kmer_count for i in indices
+            ]
+            col_indices.extend(rev_indices)
+            indptr.append(len(col_indices))
+            read_names.append(seq_id)
+            strands.append(1)
+    col_indices_array = np.frombuffer(col_indices, dtype=np.uint64)
+    data_array = np.ones_like(col_indices_array, dtype=np.float32)
+    indptr_array = np.frombuffer(indptr, dtype=np.uint64)
+
+    return data_array, col_indices_array, indptr_array, strands, read_names

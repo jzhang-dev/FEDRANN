@@ -355,8 +355,8 @@ def main():
     globals.threads = args.threads
     globals.seed = args.seed
 
-    if not which("kmer_searcher"):
-        raise RuntimeError("Unable to find 'kmer_searcher' executable.")
+    # if not which("kmer_searcher"):
+    #     raise RuntimeError("Unable to find 'kmer_searcher' executable.")
 
     output_dir = abspath(args.output_dir)
     os.makedirs(output_dir, exist_ok=True)

@@ -15,7 +15,6 @@ mkdir -p test/output/
     --seed 602 \
     --kmer-min-multiplicity 2 \
     --dimension-reduction mpsrp \
-    --threads 2 \
-    --mprof
+    --threads 2
 
-#mprof plot --output test/output/mprof_plot.png test/output/mprof/memory_profile.dat
+# mprof plot --output test/output/mprof_plot.png test/output/mprof/memory_profile.dat
