@@ -42,4 +42,4 @@ cdef class PyKmerSearcher:
             indices = [index for index in result.second]
             py_results.append((id_str, indices))
         
-        return py_results
+        return results

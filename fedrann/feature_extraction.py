@@ -128,7 +128,7 @@ def get_hash_value(kmer: str, seed: int) -> int:
 
 
 
-def get_feature_matrix_1(
+def get_feature_matrix(
     input_path: str,
     k: int,
     sample_fraction: float,
@@ -176,52 +176,3 @@ def get_feature_matrix_1(
 
     return feature_matrix, read_names, strands
 
-
-def _build_automaton(kmers: Sequence[str]) -> ahocorasick.Automaton:
-    # Function to build the Aho-Corasick automaton
-    A = ahocorasick.Automaton()
-    for i, kmer in enumerate(kmers):
-        A.add_word(kmer, i)
-    A.make_automaton()
-    return A
-
-
-def get_feature_matrix_2(
-    input_path: str,
-    k: int,
-    sample_fraction: float,
-    min_multiplicity: int = 2,
-    batch_size: int = 10000,
-):
-    # Aho-Corasick
-    threads = globals.threads
-    seed = globals.seed + 578
-
-    logger.debug("Counting k-mers with Jellyfish")
-    jellyfish_result = run_jellyfish(
-        input_file=input_path,
-        k=k,
-        threads=threads,
-        min_multiplicity=min_multiplicity,
-        temp_dir=join(globals.output_dir, "jellyfish_temp"),
-    )
-
-    logger.debug("Loading reads")
-    loader = load_reads(input_path, batch_size=batch_size)
-    batches: dict[int, tuple[int, list[FastxRecord]] | None] = {
-        i0: (i0, records) for i0, records in loader
-    }
-
-    logger.debug("Sampling k-mers")
-    rng = np.random.default_rng(seed=seed + 23)
-    selected_kmers = [
-        kmer for kmer in jellyfish_result.get_result() if rng.random() < sample_fraction
-    ]
-    logger.debug(f"Sampled {len(selected_kmers)} k-mers")
-    logger.debug("Computing reverse complements for selected k-mers")
-    reverse_complement_kmers = [reverse_complement(kmer) for kmer in selected_kmers]
-    selected_kmers.extend(reverse_complement_kmers)
-    del reverse_complement_kmers
-
-    logger.debug("Building Aho-Corasick automaton")
-    automaton = _build_automaton(selected_kmers)

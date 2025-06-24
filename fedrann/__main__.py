@@ -12,12 +12,14 @@ import multiprocessing
 import subprocess
 import functools
 import gc
+from shutil import rmtree
 import argparse
 from itertools import chain
 import os
 from os.path import join
 from os.path import abspath, join, splitext
 import scipy as sp
+import numpy as np
 import pandas as pd
 from scipy.sparse._csr import csr_matrix
 from memory_profiler import memory_usage
@@ -27,7 +29,7 @@ import logging
 from . import __version__, __description__
 
 from .feature_extraction import (
-    get_feature_matrix_1,
+    get_feature_matrix,
 )
 from .preprocess import tf_transform, idf_transform
 from .dim_reduction import (
@@ -156,10 +158,10 @@ def parse_command_line_arguments():
         help="Number of trees to use in NNDescent.",
     )
     parser.add_argument(
-        "--neighbor-count",
+        "--nndescent-n-neighbors",
         type=int,
-        required=False,
-        default=20,
+        default=50,
+        help="Number of neighbors to use in building NNDescent index.",
     )
     parser.add_argument(
         "--seed",
@@ -167,6 +169,12 @@ def parse_command_line_arguments():
         required=False,
         default=356115,
         help="Random seed for reproducibility.",
+    )
+    parser.add_argument(
+        "--keep-intermediates",
+        action="store_true",
+        default=False,
+        help="Do not remove intermediate files",
     )
     parser.add_argument(
         "--mprof",
@@ -184,7 +192,7 @@ def get_feature_weights(feature_matrix: csr_matrix, method: str) -> csr_matrix:
     logger.debug(f"Applying preprocessing method {method!r} to feature matrix.")
 
     if method == "IDF":
-        feature_matrix, _ = idf_transform(feature_matrix)
+        feature_matrix, _ = idf_transform(feature_matrix, threads=globals.threads)
     else:
         raise ValueError()
     return feature_matrix
@@ -221,19 +229,18 @@ def compute_dimension_reduction(
 def get_neighbors_ava(
     embedding_matrix: NDArray,
     method: str,
-    neighbor_count: int,
     nndescent_n_trees: int,
+    nndescent_n_neighbors: int,
     leaf_size: int = 200,
-) -> NDArray:
+) -> tuple[NDArray, NDArray]:
     if method.lower() == "nndescent":
         logger.info(
             f"Using NNDescent method to find nearest neighbors (n_trees = {nndescent_n_trees}, left_size = {leaf_size})"
         )
-        neighbor_indices = NNDescent_ava().get_neighbors(
+        neighbor_indices, distances = NNDescent_ava().get_neighbors(
             embedding_matrix,
             metric="cosine",
-            n_neighbors=neighbor_count + 1,  # +1 to include self in the neighbors
-            index_n_neighbors=50,
+            index_n_neighbors=nndescent_n_neighbors,
             n_trees=nndescent_n_trees,
             leaf_size=leaf_size,
             n_iters=None,
@@ -249,48 +256,71 @@ def get_neighbors_ava(
         raise NotImplementedError()
     else:
         raise ValueError(f"Invalid method: {method}. Expected 'nndescent' or 'hnsw'.")
-    return neighbor_indices
+    return neighbor_indices, distances
 
 
-def get_output_dataframe(
+def get_neighbor_table(
     neighbor_matrix: NDArray,
-    read_names: List[str],
-    strands: list[int],
+    neighbor_distances: NDArray,
 ) -> pd.DataFrame:
-    query_names = []
-    target_names = []
-    ranks = []
-    query_orientations = []
-    target_orientations = []
+    """
+    Convert neighbor matrix and distance matrix into a DataFrame of neighbor pairs.
 
-    for query_index in range(0, neighbor_matrix.shape[0]):
-        query_name = read_names[query_index]
-        neighbors = neighbor_matrix[query_index]
-        query_orientation = ["+", "-"][strands[query_index]]
-        for rank, target_index in enumerate(neighbors):
-            if target_index == query_index:
-                continue
-            target_name = read_names[target_index]
-            target_orientation = ["+", "-"][strands[target_index]]
-            query_names.append(query_name)
-            query_orientations.append(query_orientation)
-            target_names.append(target_name)
-            target_orientations.append(target_orientation)
-            ranks.append(rank)
+    Args:
+        neighbor_matrix: 2D array where each row contains indices of neighbors
+        neighbor_distances: 2D array with corresponding distances to neighbors
 
-    columns = {
-        "query_name": query_names,
-        "query_orientation": query_orientations,
-        "target_name": target_names,
-        "target_orientation": target_orientations,
-        "neighbor_rank": ranks,
+    Returns:
+        DataFrame with columns: query_index, target_index, distance, rank
+    """
+    # Get shapes and validate inputs
+    n_queries, n_neighbors = neighbor_matrix.shape
+    if neighbor_distances.shape != (n_queries, n_neighbors):
+        raise ValueError(
+            "neighbor_matrix and neighbor_distances must have the same shape"
+        )
+
+    # Create query indices (repeated for each neighbor)
+    query_indices = np.repeat(np.arange(n_queries), n_neighbors)
+
+    # Flatten neighbor matrix and distances
+    target_indices = neighbor_matrix.ravel()
+    distances = neighbor_distances.ravel()
+
+    # Create ranks (0 to n_neighbors-1 repeated for each query)
+    ranks = np.tile(np.arange(n_neighbors), n_queries)
+
+    # Filter out self-matches (where query_index == target_index)
+    mask = query_indices != target_indices
+
+    # Create DataFrame from filtered arrays
+    nbr_df = pd.DataFrame(
+        {
+            "query_index": query_indices[mask],
+            "target_index": target_indices[mask],
+            "distance": distances[mask],
+            "rank": ranks[mask],
+        }
+    )
+
+    return nbr_df
+
+
+def get_metadata_table(
+    read_names: Sequence[str],
+    strands: Sequence[int],
+) -> pd.DataFrame:
+    metadata = {
+        "index": np.arange(len(read_names)),
+        "read_name": read_names,
+        "strand": strands,
     }
-    df = pd.DataFrame(columns)
-    logger.debug(f"Output DataFrame shape: {df.shape}")
-    return df
+    metadata_df = pd.DataFrame(metadata)
+    return metadata_df
 
 
 def run_fedrann_pipeline(
+    *,
     input_path: str,
     output_dir: str,
     kmer_size: int,
@@ -300,20 +330,32 @@ def run_fedrann_pipeline(
     embedding_dimension: int,
     dimension_reduction: str,
     knn: str,
-    neighbor_count: int,
     nndescent_n_trees: int,
+    nndescent_n_neighbors: int,
+    keep_intermediates: bool,
 ):
     """
     Run the SeqNeighbor pipeline with the specified parameters.
     """
     # Extract features
     logger.info("--- 1. Feature Extraction ---")
-    feature_matrix, read_names, strands = get_feature_matrix_1(
+    feature_matrix, read_names, strands = get_feature_matrix(
         input_path=input_path,
         k=kmer_size,
         sample_fraction=kmer_sample_fraction,
         min_multiplicity=kmer_min_multiplicity,
     )
+
+    # Save metadata
+    metadata_output_file = join(output_dir, "metadata.tsv")
+    logger.info(f"Saved metadata table to {metadata_output_file}")
+    metadata_df = get_metadata_table(
+        read_names=read_names,
+        strands=strands,
+    )
+    metadata_df.to_csv(metadata_output_file, sep="\t", index=False)
+    del read_names, strands
+    gc.collect()
 
     # Preprocess features
     feature_matrix = get_feature_weights(feature_matrix, preprocess)
@@ -330,23 +372,32 @@ def run_fedrann_pipeline(
 
     # Nearest neighbors search
     logger.info("--- 3. Nearest Neighbors Search ---")
-    neighbor_matrix = get_neighbors_ava(
+    neighbor_matrix, distances = get_neighbors_ava(
         embedding_matrix,
         method=knn,
-        neighbor_count=neighbor_count,
         nndescent_n_trees=nndescent_n_trees,
+        nndescent_n_neighbors=nndescent_n_neighbors,
     )
     del embedding_matrix
     gc.collect()
 
     # Save output
-    output_file = join(output_dir, "overlaps.tsv")
-    df = get_output_dataframe(
-        neighbor_matrix=neighbor_matrix, read_names=read_names, strands=strands
-    )
-    df.to_csv(output_file, sep="\t", index=False)
+    nbr_output_file = join(output_dir, "overlaps.tsv")
+    logger.debug("Saving overlap table to %s", nbr_output_file)
 
-    logger.info(f"Pipeline completed. Output saved to {output_file}")
+    nbr_df = get_neighbor_table(
+        neighbor_matrix=neighbor_matrix,
+        neighbor_distances=distances,
+    )
+    del neighbor_matrix, distances
+    gc.collect()
+    nbr_df.to_csv(nbr_output_file, sep="\t", index=False)
+
+    if not keep_intermediates:
+        logger.debug("Removing intermediate files")
+        rmtree(globals.temp_dir)
+        
+    logger.info(f"Pipeline completed.")
 
 
 def main():
@@ -385,8 +436,9 @@ def main():
         embedding_dimension=args.embedding_dimension,
         dimension_reduction=args.dimension_reduction,
         knn=args.knn,
-        neighbor_count=args.neighbor_count,
         nndescent_n_trees=args.nndescent_n_trees,
+        nndescent_n_neighbors=args.nndescent_n_neighbors,
+        keep_intermediates=args.keep_intermediates,
     )
     if args.mprof:
         logger.debug("Memory profiling enabled. Running with memory profiler.")
@@ -408,6 +460,7 @@ def main():
             mprof_file.flush()
     else:
         f()
+
 
 if __name__ == "__main__":
     multiprocessing.set_start_method("spawn")

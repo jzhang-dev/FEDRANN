@@ -16,6 +16,7 @@ dependencies:
   - numba
   - numpy==1.26.4
   - pandas
+  - conda-forge::pigz
   - conda-forge::pyahocorasick == 2.1.0
   - pygraphviz
   - pynndescent==0.5.12

@@ -273,7 +273,7 @@ def get_kmer_features(
         for seq_id, indices in results:
             col_indices.extend(indices)
             indptr.append(len(col_indices))
-            read_names.append(seq_id)
+            read_names.append(seq_id.decode('utf-8'))
             strands.append(0)
 
             rev_indices = [
