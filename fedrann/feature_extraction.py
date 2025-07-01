@@ -130,6 +130,7 @@ def get_hash_value(kmer: str, seed: int) -> int:
 
 def get_feature_matrix(
     input_path: str,
+    metadata_output_file: str,
     k: int,
     sample_fraction: float,
     min_multiplicity: int = 2,
@@ -153,8 +154,9 @@ def get_feature_matrix(
             "Unsupported file format. Please provide a FASTA or FASTQ file."
         )
 
-    data_array, col_indices_array, indptr_array, strands, read_names = get_kmer_features(
+    data_array, col_indices_array, indptr_array = get_kmer_features(
             input_fasta_path,
+            metadata_output_file,
             k=k,
             sample_fraction=sample_fraction,
             min_multiplicity=min_multiplicity,
@@ -174,5 +176,5 @@ def get_feature_matrix(
         f"{feature_matrix.shape=}, {len(feature_matrix.data)=}, density={_get_matrix_density(feature_matrix):.6f}"
     )
 
-    return feature_matrix, read_names, strands
+    return feature_matrix
 

@@ -339,23 +339,17 @@ def run_fedrann_pipeline(
     """
     # Extract features
     logger.info("--- 1. Feature Extraction ---")
-    feature_matrix, read_names, strands = get_feature_matrix(
+    metadata_output_file = join(output_dir, "metadata.tsv")
+    feature_matrix = get_feature_matrix(
         input_path=input_path,
+        metadata_output_file=metadata_output_file,
         k=kmer_size,
         sample_fraction=kmer_sample_fraction,
         min_multiplicity=kmer_min_multiplicity,
     )
 
     # Save metadata
-    metadata_output_file = join(output_dir, "metadata.tsv")
     logger.info(f"Saved metadata table to {metadata_output_file}")
-    metadata_df = get_metadata_table(
-        read_names=read_names,
-        strands=strands,
-    )
-    metadata_df.to_csv(metadata_output_file, sep="\t", index=False)
-    del read_names, strands
-    gc.collect()
 
     # Preprocess features
     feature_matrix = get_feature_weights(feature_matrix, preprocess)

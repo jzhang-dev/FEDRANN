@@ -187,7 +187,7 @@ def kmer_searcher_from_bin(
 
 
 def get_kmer_features(
-    fasta_path: str, k: int, sample_fraction: float, min_multiplicity: int = 2
+    fasta_path: str, metadata_output_file:str, k: int, sample_fraction: float, min_multiplicity: int = 2
 ):
     jf_path = join(globals.temp_dir, "kmer_counts.jf")
     hash_size = "10G"
@@ -249,42 +249,15 @@ def get_kmer_features(
     subprocess.run(command, shell=True, check=True)
     
     logger.debug(f"Loading kmers from fasta {fasta_path}")
-    col_indices = array("Q", [])  # uint64
-    indptr = array("Q", [0])  # uint64
-    read_names = []
-    strands = []
-    if False:
-        for i, (name, indices, strand) in enumerate(
-            kmer_searcher_from_bin(fwd_kmer_library_path, rev_kmer_library_path, fasta_path, kmer_count, k)
-        ):
-            col_indices.extend(indices)
-            indptr.append(len(col_indices))
-            read_names.append(name)
-            strands.append(strand)
-    else:
 
-        from Kmer_searcher import PyKmerSearcher
+    from Kmer_searcher import PyKmerSearcher
 
-        searcher = PyKmerSearcher(k=k)
-        searcher.load_kmer_libs(fwd_kmer_library_path, rev_kmer_library_path)
-        searcher.process_sequences(fasta_path, num_threads=globals.threads)
-        results = searcher.get_results()
-        
-        for seq_id, indices in results:
-            col_indices.extend(indices)
-            indptr.append(len(col_indices))
-            read_names.append(seq_id.decode('utf-8'))
-            strands.append(0)
+    searcher = PyKmerSearcher(k=k)
+    searcher.load_kmer_libs(fwd_kmer_library_path, rev_kmer_library_path)
+    searcher.process_sequences(fasta_path, metadata_output_file, globals.threads)
+    coindices_c, indptr_c = searcher.get_results()
 
-            rev_indices = [
-                i + kmer_count if i < kmer_count else i - kmer_count for i in indices
-            ]
-            col_indices.extend(rev_indices)
-            indptr.append(len(col_indices))
-            read_names.append(seq_id)
-            strands.append(1)
-    col_indices_array = np.frombuffer(col_indices, dtype=np.uint64)
-    data_array = np.ones_like(col_indices_array, dtype=np.float32)
-    indptr_array = np.frombuffer(indptr, dtype=np.uint64)
+    logger.debug("Kmer_searcher: done")
+    data_array = np.ones_like(coindices_c, dtype=np.float32)
 
-    return data_array, col_indices_array, indptr_array, strands, read_names
+    return data_array, coindices_c, indptr_c
