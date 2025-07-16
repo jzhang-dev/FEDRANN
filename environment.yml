@@ -29,3 +29,4 @@ dependencies:
   - bioconda::seqkit
   - bioconda::sharedmem
   - python-xxhash==3.5.0
+  - anaconda::setuptools
