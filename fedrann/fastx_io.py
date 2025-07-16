@@ -30,7 +30,7 @@ from numpy.typing import NDArray
 import pysam
 
 from .custom_logging import logger
-from . import globals
+from . import global_variables
 
 
 T = TypeVar("T")
@@ -214,7 +214,7 @@ def unzip(input_path: str, output_path: str) -> None:
     unzip_command = [
         "pigz",
         "-p",
-        str(globals.threads),
+        str(global_variables.threads),
         "--decompress",
         "--stdout",
         input_path,

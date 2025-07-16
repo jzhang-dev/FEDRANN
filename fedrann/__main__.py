@@ -45,7 +45,7 @@ from .nearest_neighbors import (
     NNDescent_ava,
     HNSW,
 )
-from . import globals
+from . import global_variables
 from .custom_logging import logger, add_log_file
 
 
@@ -198,7 +198,7 @@ def get_feature_weights(feature_matrix: csr_matrix, method: str) -> csr_matrix:
     logger.debug(f"Applying preprocessing method {method!r} to feature matrix.")
 
     if method == "IDF":
-        feature_matrix, _ = idf_transform(feature_matrix, threads=globals.threads)
+        feature_matrix, _ = idf_transform(feature_matrix, threads=global_variables.threads)
     else:
         raise ValueError()
     return feature_matrix
@@ -211,16 +211,16 @@ def compute_dimension_reduction(
         logger.info(
             "Using multiprocess Sparse Random Projection for dimensionality reduction."
         )
-        seed = globals.seed + 5599
+        seed = global_variables.seed + 5599
         embeddings = mp_SparseRandomProjection().transform(
             data=feature_matrix,
             n_dimensions=embedding_dimension,
             seed=seed,
-            threads=globals.threads,
+            threads=global_variables.threads,
         )
     elif method.lower() == "srp":
         logger.info("Using Sparse Random Projection for dimensionality reduction.")
-        seed = globals.seed + 5599
+        seed = global_variables.seed + 5599
         embeddings = SparseRandomProjection().transform(
             data=feature_matrix,
             n_dimensions=embedding_dimension,
@@ -253,8 +253,8 @@ def get_neighbors_ava(
             diversify_prob=1.0,
             pruning_degree_multiplier=1.5,
             low_memory=True,
-            n_jobs=globals.threads,
-            seed=globals.seed,
+            n_jobs=global_variables.threads,
+            seed=global_variables.seed,
             verbose=True,
         )
     elif method.lower() == "hnsw":
@@ -407,7 +407,7 @@ def run_fedrann_pipeline(
 
     if not keep_intermediates:
         logger.debug("Removing intermediate files")
-        rmtree(globals.temp_dir)
+        rmtree(global_variables.temp_dir)
         
     logger.info(f"Pipeline completed.")
 
@@ -415,22 +415,22 @@ def run_fedrann_pipeline(
 def main():
     args = parse_command_line_arguments()
 
-    globals.threads = args.threads
-    globals.seed = args.seed
+    global_variables.threads = args.threads
+    global_variables.seed = args.seed
 
     if not which("kmer_searcher"):
         raise RuntimeError("Unable to find 'kmer_searcher' executable.")
 
     output_dir = abspath(args.output_dir)
     os.makedirs(output_dir, exist_ok=True)
-    globals.output_dir = output_dir
+    global_variables.output_dir = output_dir
 
     logfile = join(output_dir, "fedrann.log")
     add_log_file(logfile)
 
     temp_dir = join(output_dir, "temp")
     os.makedirs(temp_dir, exist_ok=True)
-    globals.temp_dir = temp_dir
+    global_variables.temp_dir = temp_dir
 
     logger.info(f"FEDRANN version: {__version__}")
     logger.debug(f"Input file: {args.input}")

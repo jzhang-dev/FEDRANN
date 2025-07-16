@@ -10,7 +10,7 @@ from collections import namedtuple
 from typing import Iterator
 
 from .custom_logging import logger
-from . import globals
+from . import global_variables
 
 
 class AsyncJellyfishResult:
@@ -160,9 +160,9 @@ def count_lines(filename):
 def get_kmer_features(
     fasta_path: str, k: int, sample_fraction: float, min_multiplicity: int = 2
 ):
-    jf_path = join(globals.temp_dir, "kmer_counts.jf")
+    jf_path = join(global_variables.temp_dir, "kmer_counts.jf")
     hash_size = "10G"
-    threads = globals.threads
+    threads = global_variables.threads
 
     jellyfish_count_command = [
         "jellyfish",
@@ -185,8 +185,8 @@ def get_kmer_features(
     if not isfile(jf_path):
         raise RuntimeError(f"Jellyfish count output file not found: {jf_path}")
 
-    fwd_kmer_library_path = join(globals.temp_dir, "fwd_kmer_library.fasta")
-    rev_kmer_library_path = join(globals.temp_dir, "rev_kmer_library.fasta")
+    fwd_kmer_library_path = join(global_variables.temp_dir, "fwd_kmer_library.fasta")
+    rev_kmer_library_path = join(global_variables.temp_dir, "rev_kmer_library.fasta")
 
     awk_script = r"""
         BEGIN {
@@ -205,7 +205,7 @@ def get_kmer_features(
             }
         }
     """
-    command = f"jellyfish dump -L {min_multiplicity} {jf_path} | awk -v p={sample_fraction} -v seed={globals.seed} '{awk_script}' > {fwd_kmer_library_path}"
+    command = f"jellyfish dump -L {min_multiplicity} {jf_path} | awk -v p={sample_fraction} -v seed={global_variables.seed} '{awk_script}' > {fwd_kmer_library_path}"
     logger.debug(f"Running Jellyfish dump command: {command}")
     subprocess.run(command, shell=True, check=True)
 
@@ -215,13 +215,13 @@ def get_kmer_features(
     )  # 每个kmer有两行（header和sequence）
     logger.debug(f"Number of kmers in the library: {kmer_count}")
 
-    command = f"seqkit seq -r -p -t DNA -j {globals.threads} {fwd_kmer_library_path} > {rev_kmer_library_path}"
+    command = f"seqkit seq -r -p -t DNA -j {global_variables.threads} {fwd_kmer_library_path} > {rev_kmer_library_path}"
     logger.debug(f"Creating reverse complement for kmer library: {command}")
     subprocess.run(command, shell=True, check=True)
 
-    kmer_searcher_output_dir = join(globals.temp_dir, "kmer_searcher")
+    kmer_searcher_output_dir = join(global_variables.temp_dir, "kmer_searcher")
 
-    command = f"cat {fwd_kmer_library_path} {rev_kmer_library_path} | grep -v '^>' | kmer_searcher /dev/stdin {fasta_path} {kmer_searcher_output_dir} {k} {globals.threads}"
+    command = f"cat {fwd_kmer_library_path} {rev_kmer_library_path} | grep -v '^>' | kmer_searcher /dev/stdin {fasta_path} {kmer_searcher_output_dir} {k} {global_variables.threads}"
     logger.debug(f"Searching kmers: {command}")
     subprocess.run(command, shell=True, check=True)
 

@@ -27,7 +27,7 @@ from .fastx_io import (
 from .count_kmers import run_jellyfish, get_kmer_features
 
 
-from . import globals
+from . import global_variables
 from .custom_logging import logger
 
 
@@ -135,14 +135,14 @@ def get_feature_matrix(
 
     # Unzip
     if input_path.endswith(".gz"):
-        input_unzipped_path = join(globals.temp_dir, os.path.basename(input_path[:-3]))
+        input_unzipped_path = join(global_variables.temp_dir, os.path.basename(input_path[:-3]))
         unzip(input_path, input_unzipped_path)
     else:
         input_unzipped_path = input_path
 
     # Convert FASTQ to FASTA
     if input_unzipped_path.endswith(".fastq") or input_unzipped_path.endswith(".fq"):
-        input_fasta_path = join(globals.temp_dir, "input.fasta")
+        input_fasta_path = join(global_variables.temp_dir, "input.fasta")
         convert_fastq_to_fasta(input_unzipped_path, input_fasta_path)
     elif input_unzipped_path.endswith(".fasta") or input_unzipped_path.endswith(".fa"):
         input_fasta_path = input_unzipped_path
