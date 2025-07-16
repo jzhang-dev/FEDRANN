@@ -222,7 +222,7 @@ def get_kmer_features(
     kmer_searcher_output_dir = join(globals.temp_dir, "kmer_searcher")
 
     command = f"cat {fwd_kmer_library_path} {rev_kmer_library_path} | grep -v '^>' | kmer_searcher /dev/stdin {fasta_path} {kmer_searcher_output_dir} {k} {globals.threads}"
-    logger.debug(f"Searching kmers for forward strands: {command}")
+    logger.debug(f"Searching kmers: {command}")
     subprocess.run(command, shell=True, check=True)
 
     logger.debug("Parsing kmer_searcher output")

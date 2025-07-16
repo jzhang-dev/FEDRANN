@@ -171,6 +171,12 @@ def parse_command_line_arguments():
         help="Random seed for reproducibility.",
     )
     parser.add_argument(
+        "--save-feature-matrix",
+        action="store_true",
+        default=False,
+        help="Save the feature matrix to a file.",
+    )
+    parser.add_argument(
         "--keep-intermediates",
         action="store_true",
         default=False,
@@ -332,6 +338,7 @@ def run_fedrann_pipeline(
     knn: str,
     nndescent_n_trees: int,
     nndescent_n_neighbors: int,
+    save_feature_matrix: bool,
     keep_intermediates: bool,
 ):
     """
@@ -359,6 +366,11 @@ def run_fedrann_pipeline(
 
     # Preprocess features
     feature_matrix = get_feature_weights(feature_matrix, preprocess)
+    if save_feature_matrix:
+        logger.info("Saving feature matrix")
+        feature_matrix_output_file = join(output_dir, "feature_matrix.npz")
+        sp.sparse.save_npz(feature_matrix_output_file, feature_matrix)
+        logger.info(f"Feature matrix saved to {feature_matrix_output_file!r}")
 
     # Dimensionality reduction
     logger.info("--- 2. Dimensionality Reduction ---")
@@ -439,6 +451,7 @@ def main():
         nndescent_n_trees=args.nndescent_n_trees,
         nndescent_n_neighbors=args.nndescent_n_neighbors,
         keep_intermediates=args.keep_intermediates,
+        save_feature_matrix=args.save_feature_matrix,
     )
     if args.mprof:
         logger.debug("Memory profiling enabled. Running with memory profiler.")

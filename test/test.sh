@@ -15,6 +15,7 @@ mkdir -p test/output/
     --seed 602 \
     --kmer-min-multiplicity 2 \
     --dimension-reduction mpsrp \
+    --save-feature-matrix \
     --threads 2 \
     --mprof
 
