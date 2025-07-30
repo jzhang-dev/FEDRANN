@@ -197,7 +197,7 @@ def parse_command_line_arguments():
 def get_feature_weights(feature_matrix: csr_matrix, method: str) -> csr_matrix:
     logger.debug(f"Applying preprocessing method {method!r} to feature matrix.")
 
-    if method.lower == "idf":
+    if method.lower() == "idf":
         feature_matrix, _ = idf_transform(feature_matrix, threads=global_variables.threads)
     else:
         raise ValueError()

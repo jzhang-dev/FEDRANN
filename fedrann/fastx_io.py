@@ -188,9 +188,8 @@ def convert_fastq_to_fasta(fastq_path: str, fasta_path: str) -> None:
     Convert a FASTQ file to a FASTA file.
     """
     seqkit_command = [
-        "seqkit",
-        "seq",
-        "-f",  # FASTA output
+        "seqkit", "fq2fa",
+        "-j", "128",  # FASTA output
         fastq_path,
         "-o",
         fasta_path,
