@@ -189,7 +189,7 @@ def convert_fastq_to_fasta(fastq_path: str, fasta_path: str) -> None:
     """
     seqkit_command = [
         "seqkit", "fq2fa",
-        "-j", "128",  # FASTA output
+        "-j", str(global_variables.threads),  # FASTA output
         fastq_path,
         "-o",
         fasta_path,
