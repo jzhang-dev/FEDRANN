@@ -2,6 +2,8 @@
 
 Fedrann is a scalable pipeline for overlap detection based on large-scale sequencing data. It is based on three steps: **f**eature **e**xtraction, **d**imenality **r**eduction, and **a**pproximate *k*-**n**earest **n**eighbor search. 
 
+[![CI](https://github.com/jzhang-dev/FEDRANN/actions/workflows/ci.yml/badge.svg)](https://github.com/jzhang-dev/FEDRANN/actions/workflows/ci.yml)
+
 ## Installation
 
 ```bash
@@ -16,6 +18,9 @@ cd kmer_searcher && ./build.sh && cd ..
 
 # Install Fedrann
 pip install .
+
+# Test installation
+test/test.sh
 ```
 
 ## Usage
