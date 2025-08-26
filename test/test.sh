@@ -16,7 +16,4 @@ mkdir -p test/output/
     --kmer-min-multiplicity 2 \
     --dimension-reduction mpsrp \
     --save-feature-matrix \
-    --threads 2 \
-    --mprof
-
-#mprof plot --output test/output/mprof_plot.png test/output/mprof/memory_profile.dat
+    --threads 2
