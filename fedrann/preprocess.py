@@ -21,7 +21,7 @@ def idf_transform(feature_matrix: csr_matrix, idf=None, *, threads: int = 1, chu
         nrow = feature_matrix.shape[0]
         
         logger.debug("Calculating IDF")
-        idf = np.log(nrow / (col_sums.astype(np.float32) + 1e-12)).astype(np.float32)
+        idf = np.log(nrow / (col_sums.astype(np.uint32) + 1e-12)).astype(np.float32)
     
     logger.debug("Applying IDF transformation")
     data = feature_matrix.data
@@ -31,7 +31,7 @@ def idf_transform(feature_matrix: csr_matrix, idf=None, *, threads: int = 1, chu
         raise ValueError("Feature matrix is empty, cannot apply IDF transformation.")
 
     with sharedmem.MapReduce(np=threads) as pool:
-        transformed_data = sharedmem.empty(nnz_count, dtype=np.float32) # type: ignore
+        transformed_data = sharedmem.empty(nnz_count, dtype=np.float16) # type: ignore
 
         def work(i0):
             end_idx = min(i0 + chunk_size, nnz_count)

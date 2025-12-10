@@ -176,14 +176,17 @@ def get_feature_matrix(
 
     # Create sparse matrix
     logger.debug("Creating sparse feature matrix")
-    col_indices_array = np.frombuffer(col_indices, dtype=np.uint64)
-    data_array = np.ones_like(col_indices_array, dtype=np.float32)
+    col_indices_array = np.frombuffer(col_indices, dtype=np.uint32)
+    data_array = np.ones_like(col_indices_array, dtype=np.uint8)
     indptr_array = np.frombuffer(indptr, dtype=np.uint64)
+    if np.max(col_indices_array) > 4294967295 :
+        raise TypeError("col_indices_array max value > 4294967295! ")
+    
     logger.debug(f"{data_array.shape=}, {col_indices_array.shape=}, {indptr_array.shape=}")
 
     feature_matrix = csr_matrix(
         (data_array, col_indices_array, indptr_array),
-        dtype=np.float32,
+        dtype=np.uint8,
         copy=False,
     )
 

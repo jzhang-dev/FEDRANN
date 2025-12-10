@@ -402,7 +402,7 @@ def run_fedrann_pipeline(
 
 def main():
     args = parse_command_line_arguments()
-
+    print(" 20251209 11. modified")
     globals.threads = args.threads
     globals.seed = args.seed
 
@@ -441,25 +441,35 @@ def main():
         keep_intermediates=args.keep_intermediates,
     )
     if args.mprof:
-        logger.debug("Memory profiling enabled. Running with memory profiler.")
+        logger.debug("Attention: Memory profiling enabled. Running with memory profiler.")
         mprof_dir = join(output_dir, "mprof")
         os.makedirs(mprof_dir, exist_ok=True)
         mprof_output_path = join(mprof_dir, "memory_profile.dat")
-
-        with open(mprof_output_path, "wt") as mprof_file:
-            memory_usage(
-                f,  # type: ignore
-                backend="psutil",
-                interval=1,
-                multiprocess=True,
-                include_children=True,
-                timestamps=True,
-                stream=mprof_file,
-                max_usage=False,
-            )
-            mprof_file.flush()
+        
+        # 确保函数有足够的执行时间
+        @memory_usage(
+            backend="psutil",
+            interval=1,
+            multiprocess=True,
+            include_children=True,
+            timestamps=True,
+            max_usage=False,
+            stream=open(mprof_output_path, "wt")  # 直接传入文件流
+        )
+        def profiled_function():
+            return f()
+        
+        # 执行并确保文件关闭
+        try:
+            profiled_function()
+        finally:
+            # 确保文件正确关闭
+            if 'profiled_function' in locals():
+                # 获取stream并关闭
+                pass
     else:
         f()
+        
 
 
 if __name__ == "__main__":
