@@ -182,21 +182,29 @@ void read_sequences(const std::string& filename, ThreadSafeQueue<SequenceRecord>
     }
 }
 
-void writeKmerStatsSimple(const std::unordered_map<uint64_t, uint64_t>& kmer_record_counts, 
-                         const std::string& filename) {
-    std::ofstream outfile(filename);
+void writeKmerStatsToBinary(const std::unordered_map<uint64_t, uint64_t>& kmer_record_counts, 
+                           const std::string& filename) {
+    std::ofstream outfile(filename, std::ios::binary);
     if (!outfile.is_open()) {
         std::cerr << "无法打开文件: " << filename << std::endl;
         return;
     }
+
     
-    for (const auto& [kmer_index, record_size] : kmer_record_counts) {
-        outfile << kmer_index << "\t" << record_size << "\n";
+    // 遍历所有k-mer
+    for (const auto& [kmer_index, count] : kmer_record_counts) {
+        
+        // 写入k-mer索引
+        outfile.write(reinterpret_cast<const char*>(&kmer_index), sizeof(kmer_index));
+        // 写入记录数量
+        outfile.write(reinterpret_cast<const char*>(&count), sizeof(count));
+        
     }
     
     outfile.close();
-    std::cout << "结果已写入: " << filename << std::endl;
 }
+
+
 
 int main(int argc, char* argv[]) {
     std::ios_base::sync_with_stdio(false);
@@ -331,7 +339,7 @@ int main(int argc, char* argv[]) {
     }
 
     // 获取最终的统计结果并写入文件
-    writeKmerStatsSimple(global_kmer_stats.get_counts(), fs::path(output_dir) / "kmer_frequency.txt");
+    writeKmerStatsToBinary(global_kmer_stats.get_counts(), fs::path(output_dir) / "kmer_frequency.bin");
     
     // 将所有结果写入最终文件
     global_output.write_to_file(fs::path(output_dir) / "output.bin");
