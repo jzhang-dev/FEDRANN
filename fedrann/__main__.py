@@ -38,7 +38,7 @@ from .nearest_neighbors import (
     NNDescent_ava,
     HNSW,
 )
-from . import globals
+from . import global_variables
 from .custom_logging import logger, add_log_file
 
 
@@ -164,6 +164,12 @@ def parse_command_line_arguments():
         help="Random seed for reproducibility.",
     )
     parser.add_argument(
+        "--save-feature-matrix",
+        action="store_true",
+        default=False,
+        help="Save the feature matrix to a file.",
+    )
+    parser.add_argument(
         "--keep-intermediates",
         action="store_true",
         default=False,
@@ -202,8 +208,8 @@ def get_neighbors_ava(
             diversify_prob=1.0,
             pruning_degree_multiplier=1.5,
             low_memory=True,
-            n_jobs=globals.threads,
-            seed=globals.seed,
+            n_jobs=global_variables.threads,
+            seed=global_variables.seed,
             verbose=True,
         )
     elif method.lower() == "hnsw":
@@ -285,6 +291,7 @@ def run_fedrann_pipeline(
     knn: str,
     nndescent_n_trees: int,
     nndescent_n_neighbors: int,
+    save_feature_matrix: bool,
     keep_intermediates: bool,
 ):
     """
@@ -352,7 +359,7 @@ def run_fedrann_pipeline(
 
     if not keep_intermediates:
         logger.debug("Removing intermediate files")
-        rmtree(globals.temp_dir)
+        rmtree(global_variables.temp_dir)
         
     logger.info(f"Pipeline completed.")
 
@@ -367,14 +374,14 @@ def main():
 
     output_dir = abspath(args.output_dir)
     os.makedirs(output_dir, exist_ok=True)
-    globals.output_dir = output_dir
+    global_variables.output_dir = output_dir
 
     logfile = join(output_dir, "fedrann.log")
     add_log_file(logfile)
 
     temp_dir = join(output_dir, "temp")
     os.makedirs(temp_dir, exist_ok=True)
-    globals.temp_dir = temp_dir
+    global_variables.temp_dir = temp_dir
 
     logger.info(f"FEDRANN version: {__version__}")
     logger.debug(f"Input file: {args.input}")
@@ -393,6 +400,7 @@ def main():
         nndescent_n_trees=args.nndescent_n_trees,
         nndescent_n_neighbors=args.nndescent_n_neighbors,
         keep_intermediates=args.keep_intermediates,
+        save_feature_matrix=args.save_feature_matrix,
     )
     if args.mprof:
         logger.debug("Attention: Memory profiling enabled. Running with memory profiler.")

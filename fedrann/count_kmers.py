@@ -56,7 +56,7 @@ def run_kmer_searcher(
         
     jf_path = join(globals.temp_dir, "kmer_counts.jf")
     hash_size = "10G"
-    threads = globals.threads
+    threads = global_variables.threads
 
     jellyfish_count_command = [
         "jellyfish",
@@ -79,8 +79,8 @@ def run_kmer_searcher(
     if not isfile(jf_path):
         raise RuntimeError(f"Jellyfish count output file not found: {jf_path}")
 
-    fwd_kmer_library_path = join(globals.temp_dir, "fwd_kmer_library.fasta")
-    rev_kmer_library_path = join(globals.temp_dir, "rev_kmer_library.fasta")
+    fwd_kmer_library_path = join(global_variables.temp_dir, "fwd_kmer_library.fasta")
+    rev_kmer_library_path = join(global_variables.temp_dir, "rev_kmer_library.fasta")
 
     awk_script = r"""
         BEGIN {
@@ -99,7 +99,7 @@ def run_kmer_searcher(
             }
         }
     """
-    command = f"jellyfish dump -L {min_multiplicity} {jf_path} | awk -v p={sample_fraction} -v seed={globals.seed} '{awk_script}' > {fwd_kmer_library_path}"
+    command = f"jellyfish dump -L {min_multiplicity} {jf_path} | awk -v p={sample_fraction} -v seed={global_variables.seed} '{awk_script}' > {fwd_kmer_library_path}"
     logger.debug(f"Running Jellyfish dump command: {command}")
     subprocess.run(command, shell=True, check=True)
 
@@ -109,11 +109,11 @@ def run_kmer_searcher(
     )  # 每个kmer有两行（header和sequence）
     logger.debug(f"Number of kmers in the library: {kmer_count}")
 
-    command = f"seqkit seq -r -p -t DNA -j {globals.threads} {fwd_kmer_library_path} > {rev_kmer_library_path}"
+    command = f"seqkit seq -r -p -t DNA -j {global_variables.threads} {fwd_kmer_library_path} > {rev_kmer_library_path}"
     logger.debug(f"Creating reverse complement for kmer library: {command}")
     subprocess.run(command, shell=True, check=True)
 
-    kmer_searcher_output_dir = join(globals.temp_dir, "kmer_searcher")
+    kmer_searcher_output_dir = join(global_variables.temp_dir, "kmer_searcher")
 
     command = f"cat {fwd_kmer_library_path} {rev_kmer_library_path} | grep -v '^>' | kmer_searcher /dev/stdin {input_fasta_path} {kmer_searcher_output_dir} {k} {globals.threads}"
     logger.debug(f"Searching kmers for forward strands: {command}")

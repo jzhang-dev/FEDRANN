@@ -39,6 +39,13 @@ jobs:
         test/test.sh
         
 
+    - name: Upload output
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: fedrann-output
+        path: test/output/
+
 
 
 
