@@ -30,6 +30,7 @@ from . import __version__, __description__
 
 from .feature_extraction import (
     get_feature_matrix,
+    get_metadata
 )
 from .count_kmers import run_kmer_searcher
 from .precompute import get_precompute_matrix
@@ -123,14 +124,13 @@ def parse_command_line_arguments():
         required=False,
         default=1,
     )
-    # parser.add_argument(
-    #     "-d",
-    #     "--dimension-reduction",
-    #     type=str,
-    #     required=False,
-    #     default="SRP",
-    #     help="Dimension reduction method",
-    # )
+    parser.add_argument(
+        "--chunck-size",
+        type=int,
+        required=False,
+        default=100000,
+    )
+
     parser.add_argument(
         "-n",
         "--embedding-dimension",
@@ -279,6 +279,42 @@ def get_metadata_table(
     metadata_df = pd.DataFrame(metadata)
     return metadata_df
 
+def get_output_dataframe(
+    neighbor_matrix: NDArray,
+    read_names: List[str],
+    strands: list[int],
+) -> pd.DataFrame:
+    query_names = []
+    target_names = []
+    ranks = []
+    query_orientations = []
+    target_orientations = []
+
+    for query_index in range(0, neighbor_matrix.shape[0]):
+        query_name = read_names[query_index]
+        neighbors = neighbor_matrix[query_index]
+        query_orientation = ["+", "-"][strands[query_index]]
+        for rank, target_index in enumerate(neighbors):
+            if target_index == query_index:
+                continue
+            target_name = read_names[target_index]
+            target_orientation = ["+", "-"][strands[target_index]]
+            query_names.append(query_name)
+            query_orientations.append(query_orientation)
+            target_names.append(target_name)
+            target_orientations.append(target_orientation)
+            ranks.append(rank)
+
+    columns = {
+        "query_name": query_names,
+        "query_orientation": query_orientations,
+        "target_name": target_names,
+        "target_orientation": target_orientations,
+        "neighbor_rank": ranks,
+    }
+    df = pd.DataFrame(columns)
+    logger.debug(f"Output DataFrame shape: {df.shape}")
+    return df
 
 def run_fedrann_pipeline(
     *,
@@ -293,13 +329,14 @@ def run_fedrann_pipeline(
     nndescent_n_neighbors: int,
     save_feature_matrix: bool,
     keep_intermediates: bool,
+    chunck_size: int
 ):
     """
     Run the SeqNeighbor pipeline with the specified parameters.
     """
     # Extract features
     logger.info("--- 1. Counter kmers ---")
-    kmer_searcher_output_path,kmer_counter_path,n_features = run_kmer_searcher(
+    kmer_searcher_output_path,kmer_counter_path,n_features,read_count = run_kmer_searcher(
         input_path=input_path,
         k=kmer_size,
         sample_fraction=kmer_sample_fraction,
@@ -316,22 +353,24 @@ def run_fedrann_pipeline(
     logger.debug(f"get_precompute_matrix n_features: {n_features}")
     
     logger.info("--- 3. Generate feature matrix ---")
-    embedding_matrix, read_names, strands = get_feature_matrix(
+    embedding_matrix = get_feature_matrix(
         ks_file=kmer_searcher_output_path,
         precompute_matrix=precompute_mat,
-        kmer_count=n_features
+        kmer_count=n_features,
+        read_count=read_count,
+        chunck_size=chunck_size
     )
 
-    # Save metadata
-    metadata_output_file = join(output_dir, "metadata.tsv")
-    logger.info(f"Saved metadata table to {metadata_output_file}")
-    metadata_df = get_metadata_table(
-        read_names=read_names,
-        strands=strands,
-    )
-    metadata_df.to_csv(metadata_output_file, sep="\t", index=False)
-    del read_names, strands
-    gc.collect()
+    # # Save metadata
+    # metadata_output_file = join(output_dir, "metadata.tsv")
+    # logger.info(f"Saved metadata table to {metadata_output_file}")
+    # metadata_df = get_metadata_table(
+    #     read_names=read_names,
+    #     strands=strands,
+    # )
+    # metadata_df.to_csv(metadata_output_file, sep="\t", index=False)
+    # del read_names, strands
+    # gc.collect()
     
 
     # Nearest neighbors search
@@ -349,13 +388,18 @@ def run_fedrann_pipeline(
     nbr_output_file = join(output_dir, "overlaps.tsv")
     logger.debug("Saving overlap table to %s", nbr_output_file)
 
-    nbr_df = get_neighbor_table(
-        neighbor_matrix=neighbor_matrix,
-        neighbor_distances=distances,
+    read_names,strands = get_metadata(
+        ks_file=kmer_searcher_output_path,
+        kmer_count=n_features,
     )
-    del neighbor_matrix, distances
-    gc.collect()
-    nbr_df.to_csv(nbr_output_file, sep="\t", index=False)
+    
+    df = get_output_dataframe(
+        neighbor_matrix=neighbor_matrix, 
+        read_names=read_names, 
+        strands=strands
+    )
+    
+    df.to_csv(nbr_output_file, sep="\t", index=False)
 
     if not keep_intermediates:
         logger.debug("Removing intermediate files")
@@ -366,8 +410,8 @@ def run_fedrann_pipeline(
 
 def main():
     args = parse_command_line_arguments()
-    globals.threads = args.threads
-    globals.seed = args.seed
+    global_variables.threads = args.threads
+    global_variables.seed = args.seed
 
     if not which("kmer_searcher"):
         raise RuntimeError("Unable to find 'kmer_searcher' executable.")
@@ -401,6 +445,7 @@ def main():
         nndescent_n_neighbors=args.nndescent_n_neighbors,
         keep_intermediates=args.keep_intermediates,
         save_feature_matrix=args.save_feature_matrix,
+        chunck_size=args.chunck_size
     )
     if args.mprof:
         logger.debug("Attention: Memory profiling enabled. Running with memory profiler.")

@@ -25,7 +25,7 @@ from .fastx_io import (
     convert_fastq_to_fasta,
     make_fasta_index,
 )
-from . import globals
+from . import global_variables
 from .custom_logging import logger
 
 
@@ -104,20 +104,6 @@ def get_common_values(
 
     return result[:count]
 
-
-def _get_matrix_density(matrix: csr_matrix) -> float:
-    """
-    Calculate the density of a sparse matrix.
-    Density is defined as the ratio of non-zero elements to the total number of elements.
-    """
-    if not isinstance(matrix, csr_matrix):
-        raise TypeError("Input must be a csr_matrix")
-    assert matrix.shape is not None, "Matrix shape must be defined"
-    if matrix.shape[0] == 0 or matrix.shape[1] == 0:
-        return 0.0
-    return matrix.nnz / (matrix.shape[0] * matrix.shape[1])
-
-
 def get_hash_value(kmer: str, seed: int) -> int:
     return xxhash.xxh3_64(kmer, seed=seed).intdigest()
 
@@ -157,60 +143,138 @@ def parse_kmer_searcher_output(ks_file: str, kmer_count):
             yield id_str, rev_indices, 1
                 
 
+# def get_feature_matrix(
+#     ks_file: str,
+#     precompute_matrix: np.ndarray,
+#     kmer_count: int,
+#     read_count: int,
+#     embedding_dimensions: int
+# ):
+#     # Get features
+#     read_names = []
+#     strands = []
+#     feature_matrix = np.empty((read_count*2, embedding_dimensions), dtype=np.float32)
+#     for i, (name, indices, strand) in enumerate(
+#         parse_kmer_searcher_output(ks_file, kmer_count/2)
+#     ):
+#         data = np.ones(len(indices), dtype=np.int8)
+#         cols = np.array(indices)
+#         rows = np.zeros(len(indices), dtype=np.int32)
+#         one_read_feature = csr_matrix((data, (rows, cols)), shape=(1, kmer_count))        
+           
+#         dr_feature = one_read_feature.dot(precompute_matrix)
+        
+#         # logger.debug(f"{dr_feature.shape=}")
+#         feature_matrix[i,:] = dr_feature.toarray()
+#         read_names.append(name)
+#         strands.append(strand)
+
+#         if (i+1) % 100000 == 0:
+#             logger.debug(f"Processed {i+1} records.")
+
+#     return feature_matrix, read_names, strands
+
+
+def process_read_chunk_simple(task):
+    """
+    处理一个数据块（多条 reads），返回计算结果和读长信息。
+    
+    Args:
+        task (tuple): (数据块, precompute_matrix, kmer_count)
+    """
+    chunk_data, precompute_matrix, kmer_count, start_index = task
+    
+    # 1. 收集数据，准备批量构建稀疏矩阵
+    all_data = []
+    all_cols = []
+    all_rows = [] 
+    current_row_in_chunk = 0
+    
+    # chunk_data 是 (name, indices, strand) 的列表
+    for indices in chunk_data:
+        # A. 收集数据
+        if len(indices) == 0:
+            continue
+            
+        all_data.extend(np.ones(len(indices), dtype=np.int8))
+        all_cols.extend(indices)
+        all_rows.extend([current_row_in_chunk] * len(indices))
+        
+        current_row_in_chunk += 1
+
+    if not all_data:
+        return np.empty((0, precompute_matrix.shape[1]), dtype=precompute_matrix.dtype), []
+
+    # 2. 一次性构建稀疏矩阵 A_chunk
+    N_chunk = current_row_in_chunk
+    A_chunk = csr_matrix((all_data, (all_rows, all_cols)), 
+                         shape=(N_chunk, kmer_count))
+    
+    # 3. 一次性进行点积运算
+    R_chunk = A_chunk.dot(precompute_matrix) 
+    logger.debug(f"processed one batch: {start_index=}")
+
+    # 4. 返回密集数组和读长信息
+    return R_chunk.toarray(), start_index
+
+# --- 主程序并行处理 ---
 def get_feature_matrix(
     ks_file: str,
     precompute_matrix: np.ndarray,
-    kmer_count: int
+    kmer_count: int,
+    read_count: int,
+    chunck_size: int
 ):
+    M = precompute_matrix.shape[1]
+    feature_matrix = np.empty((read_count*2, M), dtype=np.float32)
+    
+    
+    # 1. 准备任务块
+    all_reads_iterator = parse_kmer_searcher_output(ks_file, kmer_count / 2)
+    
+    tasks = []
+    chunk_data = []
+        
+    # 划分任务并准备参数元组
+    for i, item in enumerate(all_reads_iterator):
+        
+        chunk_data.append(item[1])
+        
+        if len(chunk_data) >= chunck_size:
+            # 任务元组: (数据块, precompute_matrix, kmer_count)
+            task = (chunk_data, precompute_matrix, kmer_count, i + 1 - len(chunk_data))
+            tasks.append(task)
+            chunk_data = [] # 重置数据块
 
-    # # Unzip
-    # if input_path.endswith(".gz"):
-    #     input_unzipped_path = join(globals.temp_dir, os.path.basename(input_path[:-3]))
-    #     unzip(input_path, input_unzipped_path)
-    # else:
-    #     input_unzipped_path = input_path
+    # 处理最后一个不完整的块
+    if chunk_data:
+        task = (chunk_data, precompute_matrix, kmer_count, i + 1 - len(chunk_data))
+        tasks.append(task)
 
-    # # Convert FASTQ to FASTA
-    # if input_unzipped_path.endswith(".fastq") or input_unzipped_path.endswith(".fq"):
-    #     input_fasta_path = join(globals.temp_dir, "input.fasta")
-    #     convert_fastq_to_fasta(input_unzipped_path, input_fasta_path)
-    # elif input_unzipped_path.endswith(".fasta") or input_unzipped_path.endswith(".fa"):
-    #     input_fasta_path = input_unzipped_path
-    # else:
-    #     raise ValueError(
-    #         "Unsupported file format. Please provide a FASTA or FASTQ file."
-    #     )
+    # 2. 创建进程池并启动并行计算
+    num_processes = global_variables.threads
+    logger.debug(f"Starting parallel processing with {num_processes} processes and {len(tasks)} tasks.")
 
-    # Get features
+    
+    with Pool(processes=num_processes) as pool:
+        # pool.imap_unordered 启动并行计算，无需保持顺序
+        # result 是 (R_chunk.toarray(), names_and_strands)
+        results = pool.imap_unordered(process_read_chunk_simple, tasks)
+        
+        # 3. 收集结果
+        for feature_array, start_index in results:
+            N_chunk = feature_array.shape[0]
+            if N_chunk > 0:
+                end_index = start_index + N_chunk
+                feature_matrix[start_index:end_index, :] = feature_array
+                    
+    return feature_matrix
+
+def get_metadata(ks_file: str, kmer_count: int):
     read_names = []
     strands = []
-    features = []
-
-    for i, (name, indices, strand) in enumerate(
-        parse_kmer_searcher_output(ks_file, kmer_count/2)
-    ):
-        data = np.ones(len(indices), dtype=np.int8)
-        cols = np.array(indices)
-        rows = np.zeros(len(indices), dtype=np.int32)
-        one_read_feature = csr_matrix((data, (rows, cols)), shape=(1, kmer_count))
-        # logger.debug(f"{one_read_feature.shape=}")
-        
-           
-        dr_feature = one_read_feature.dot(precompute_matrix)
-        
-        # logger.debug(f"{dr_feature.shape=}")
-        features.append(dr_feature.toarray())
-        read_names.append(name)
-        strands.append(strand)
-
-        if (i+1) % 100000 == 0:
-            logger.debug(f"Processed {i+1} records.")
-
-    feature_matrix = np.vstack(features)
-
-    logger.debug(
-        f"{feature_matrix.shape=}"
-    )
-
-    return feature_matrix, read_names, strands
-
+    all_reads_iterator = parse_kmer_searcher_output(ks_file, kmer_count / 2)
+    for item in all_reads_iterator:
+        read_names.append(item[0])
+        strands.append(item[2])
+    return read_names,strands

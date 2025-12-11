@@ -19,7 +19,7 @@ from collections import namedtuple
 from typing import Iterator
 
 from .custom_logging import logger
-from . import globals
+
 def kmer_count_generator(filename):
     """
     生成器函数，逐条产生k-mer计数

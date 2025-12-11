@@ -10,12 +10,31 @@ from collections import namedtuple
 from typing import Iterator
 
 from .custom_logging import logger
-from . import globals
 from .fastx_io import (
     unzip,
     convert_fastq_to_fasta,
 )
+from . import global_variables
 
+def fasta_count_grep(fasta_filepath):
+    """
+    使用 grep 命令行工具快速统计 FASTA 文件中的 reads 数量。
+    """
+    try:
+        # 匹配以 > 开头的行 (^>)，并直接计数 (-c)
+        result = subprocess.run(
+            ['grep', '-c', '^>', fasta_filepath],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return int(result.stdout.strip())
+    except subprocess.CalledProcessError as e:
+        print(f"Error running grep: {e}")
+        return 0
+    except FileNotFoundError:
+        print("Grep command not found. Is it in your PATH?")
+        return 0
 
 def count_lines(filename):
     """使用 wc -l 命令统计行数"""
@@ -38,14 +57,14 @@ def run_kmer_searcher(
 ):
     
     if input_path.endswith(".gz"):
-        input_unzipped_path = join(globals.temp_dir, os.path.basename(input_path[:-3]))
+        input_unzipped_path = join(global_variables.temp_dir, os.path.basename(input_path[:-3]))
         unzip(input_path, input_unzipped_path)
     else:
         input_unzipped_path = input_path
 
     # Convert FASTQ to FASTA
     if input_unzipped_path.endswith(".fastq") or input_unzipped_path.endswith(".fq"):
-        input_fasta_path = join(globals.temp_dir, "input.fasta")
+        input_fasta_path = join(global_variables.temp_dir, "input.fasta")
         convert_fastq_to_fasta(input_unzipped_path, input_fasta_path)
     elif input_unzipped_path.endswith(".fasta") or input_unzipped_path.endswith(".fa"):
         input_fasta_path = input_unzipped_path
@@ -54,7 +73,7 @@ def run_kmer_searcher(
             "Unsupported file format. Please provide a FASTA or FASTQ file."
         )
         
-    jf_path = join(globals.temp_dir, "kmer_counts.jf")
+    jf_path = join(global_variables.temp_dir, "kmer_counts.jf")
     hash_size = "10G"
     threads = global_variables.threads
 
@@ -115,7 +134,7 @@ def run_kmer_searcher(
 
     kmer_searcher_output_dir = join(global_variables.temp_dir, "kmer_searcher")
 
-    command = f"cat {fwd_kmer_library_path} {rev_kmer_library_path} | grep -v '^>' | kmer_searcher /dev/stdin {input_fasta_path} {kmer_searcher_output_dir} {k} {globals.threads}"
+    command = f"cat {fwd_kmer_library_path} {rev_kmer_library_path} | grep -v '^>' | kmer_searcher /dev/stdin {input_fasta_path} {kmer_searcher_output_dir} {k} {global_variables.threads}"
     logger.debug(f"Searching kmers for forward strands: {command}")
     subprocess.run(command, shell=True, check=True)
 
@@ -131,5 +150,6 @@ def run_kmer_searcher(
         raise RuntimeError(
             f"kmer_searcher output file not found: {kmer_counter_path}"
         )
-        
-    return kmer_searcher_output_path,kmer_counter_path,kmer_count*2
+    
+    read_count = fasta_count_grep(input_fasta_path)
+    return kmer_searcher_output_path, kmer_counter_path, kmer_count*2, read_count
