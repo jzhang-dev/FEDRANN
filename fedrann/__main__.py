@@ -31,15 +31,8 @@ from . import __version__, __description__
 from .feature_extraction import (
     get_feature_matrix,
 )
-from .preprocess import tf_transform, idf_transform
-from .dim_reduction import (
-    SpectralEmbedding,
-    PCA,
-    GaussianRandomProjection,
-    SparseRandomProjection,
-    mp_SparseRandomProjection,
-    scBiMapEmbedding,
-)
+from .count_kmers import run_kmer_searcher
+from .precompute import get_precompute_matrix
 from .nearest_neighbors import (
     ExactNearestNeighbors,
     NNDescent_ava,
@@ -94,14 +87,14 @@ def parse_command_line_arguments():
         required=True,
         help="Directory to save output files.",
     )
-    parser.add_argument(
-        "-p",
-        "--preprocess",
-        type=str,
-        required=False,
-        default="IDF",
-        help="Preprocess method you want to implement to matrix.(TF/IDF/TF-IDF/None/count)",
-    )
+    # parser.add_argument(
+    #     "-p",
+    #     "--preprocess",
+    #     type=str,
+    #     required=False,
+    #     default="IDF",
+    #     help="Preprocess method you want to implement to matrix.(TF/IDF/TF-IDF/None/count)",
+    # )
     parser.add_argument(
         "-k",
         "--kmer-size",
@@ -130,14 +123,14 @@ def parse_command_line_arguments():
         required=False,
         default=1,
     )
-    parser.add_argument(
-        "-d",
-        "--dimension-reduction",
-        type=str,
-        required=False,
-        default="SRP",
-        help="Dimension reduction method",
-    )
+    # parser.add_argument(
+    #     "-d",
+    #     "--dimension-reduction",
+    #     type=str,
+    #     required=False,
+    #     default="SRP",
+    #     help="Dimension reduction method",
+    # )
     parser.add_argument(
         "-n",
         "--embedding-dimension",
@@ -192,44 +185,6 @@ def parse_command_line_arguments():
     # 解析参数
     args = parser.parse_args()
     return args
-
-
-def get_feature_weights(feature_matrix: csr_matrix, method: str) -> csr_matrix:
-    logger.debug(f"Applying preprocessing method {method!r} to feature matrix.")
-
-    if method.lower() == "idf":
-        feature_matrix, _ = idf_transform(feature_matrix, threads=global_variables.threads)
-    else:
-        raise ValueError()
-    return feature_matrix
-
-
-def compute_dimension_reduction(
-    feature_matrix: csr_matrix, embedding_dimension: int, method: str
-) -> NDArray:
-    if method.lower() == "mpsrp":
-        logger.info(
-            "Using multiprocess Sparse Random Projection for dimensionality reduction."
-        )
-        seed = global_variables.seed + 5599
-        embeddings = mp_SparseRandomProjection().transform(
-            data=feature_matrix,
-            n_dimensions=embedding_dimension,
-            seed=seed,
-            threads=global_variables.threads,
-        )
-    elif method.lower() == "srp":
-        logger.info("Using Sparse Random Projection for dimensionality reduction.")
-        seed = global_variables.seed + 5599
-        embeddings = SparseRandomProjection().transform(
-            data=feature_matrix,
-            n_dimensions=embedding_dimension,
-            seed=seed,
-        )
-    else:
-        raise ValueError(f"Unsupported dimension reduction method: {method}.")
-    logger.debug(f"Embedding matrix shape: {embeddings.shape}")
-    return embeddings
 
 
 def get_neighbors_ava(
@@ -332,9 +287,7 @@ def run_fedrann_pipeline(
     kmer_size: int,
     kmer_sample_fraction: float,
     kmer_min_multiplicity: int,
-    preprocess: str,
     embedding_dimension: int,
-    dimension_reduction: str,
     knn: str,
     nndescent_n_trees: int,
     nndescent_n_neighbors: int,
@@ -345,12 +298,28 @@ def run_fedrann_pipeline(
     Run the SeqNeighbor pipeline with the specified parameters.
     """
     # Extract features
-    logger.info("--- 1. Feature Extraction ---")
-    feature_matrix, read_names, strands = get_feature_matrix(
+    logger.info("--- 1. Counter kmers ---")
+    kmer_searcher_output_path,kmer_counter_path,n_features = run_kmer_searcher(
         input_path=input_path,
         k=kmer_size,
         sample_fraction=kmer_sample_fraction,
-        min_multiplicity=kmer_min_multiplicity,
+        min_multiplicity=kmer_min_multiplicity
+    )
+    logger.debug(f"kmer_searcher n_features: {n_features}")
+    
+    logger.info("--- 2. Generate dimension reduction and IDF matrix ---")
+    precompute_mat,n_features = get_precompute_matrix(
+        n_components=embedding_dimension,
+        counter_file=kmer_counter_path,
+        n_features=n_features
+    )
+    logger.debug(f"get_precompute_matrix n_features: {n_features}")
+    
+    logger.info("--- 3. Generate feature matrix ---")
+    embedding_matrix, read_names, strands = get_feature_matrix(
+        ks_file=kmer_searcher_output_path,
+        precompute_matrix=precompute_mat,
+        kmer_count=n_features
     )
 
     # Save metadata
@@ -363,27 +332,10 @@ def run_fedrann_pipeline(
     metadata_df.to_csv(metadata_output_file, sep="\t", index=False)
     del read_names, strands
     gc.collect()
-
-    # Preprocess features
-    feature_matrix = get_feature_weights(feature_matrix, preprocess)
-    if save_feature_matrix:
-        logger.info("Saving feature matrix")
-        feature_matrix_output_file = join(output_dir, "feature_matrix.npz")
-        sp.sparse.save_npz(feature_matrix_output_file, feature_matrix)
-        logger.info(f"Feature matrix saved to {feature_matrix_output_file!r}")
-
-    # Dimensionality reduction
-    logger.info("--- 2. Dimensionality Reduction ---")
-    embedding_matrix = compute_dimension_reduction(
-        feature_matrix,
-        embedding_dimension=embedding_dimension,
-        method=dimension_reduction,
-    )
-    del feature_matrix
-    gc.collect()
+    
 
     # Nearest neighbors search
-    logger.info("--- 3. Nearest Neighbors Search ---")
+    logger.info("--- 4. Nearest Neighbors Search ---")
     neighbor_matrix, distances = get_neighbors_ava(
         embedding_matrix,
         method=knn,
@@ -414,9 +366,8 @@ def run_fedrann_pipeline(
 
 def main():
     args = parse_command_line_arguments()
-
-    global_variables.threads = args.threads
-    global_variables.seed = args.seed
+    globals.threads = args.threads
+    globals.seed = args.seed
 
     if not which("kmer_searcher"):
         raise RuntimeError("Unable to find 'kmer_searcher' executable.")
@@ -444,9 +395,7 @@ def main():
         kmer_size=args.kmer_size,
         kmer_sample_fraction=args.kmer_sample_fraction,
         kmer_min_multiplicity=args.kmer_min_multiplicity,
-        preprocess=args.preprocess,
         embedding_dimension=args.embedding_dimension,
-        dimension_reduction=args.dimension_reduction,
         knn=args.knn,
         nndescent_n_trees=args.nndescent_n_trees,
         nndescent_n_neighbors=args.nndescent_n_neighbors,
@@ -454,25 +403,35 @@ def main():
         save_feature_matrix=args.save_feature_matrix,
     )
     if args.mprof:
-        logger.debug("Memory profiling enabled. Running with memory profiler.")
+        logger.debug("Attention: Memory profiling enabled. Running with memory profiler.")
         mprof_dir = join(output_dir, "mprof")
         os.makedirs(mprof_dir, exist_ok=True)
         mprof_output_path = join(mprof_dir, "memory_profile.dat")
-
-        with open(mprof_output_path, "wt") as mprof_file:
-            memory_usage(
-                f,  # type: ignore
-                backend="psutil",
-                interval=1,
-                multiprocess=True,
-                include_children=True,
-                timestamps=True,
-                stream=mprof_file,
-                max_usage=False,
-            )
-            mprof_file.flush()
+        
+        # 确保函数有足够的执行时间
+        @memory_usage(
+            backend="psutil",
+            interval=1,
+            multiprocess=True,
+            include_children=True,
+            timestamps=True,
+            max_usage=False,
+            stream=open(mprof_output_path, "wt")  # 直接传入文件流
+        )
+        def profiled_function():
+            return f()
+        
+        # 执行并确保文件关闭
+        try:
+            profiled_function()
+        finally:
+            # 确保文件正确关闭
+            if 'profiled_function' in locals():
+                # 获取stream并关闭
+                pass
     else:
         f()
+        
 
 
 if __name__ == "__main__":

@@ -7,7 +7,8 @@
 #include <queue>
 #include <filesystem>
 #include <robin_hood.h>
-
+#include <map>
+#include <unordered_set>
 namespace fs = std::filesystem;
 
 const int K = 31; // k-mer长度
@@ -20,7 +21,7 @@ struct SequenceRecord {
     std::string sequence;
 };
 
-// 线程安全队列（改用阻塞锁 + 批量处理）
+// 线程安全队列
 template <typename T>
 class ThreadSafeQueue {
 public:
@@ -29,7 +30,6 @@ public:
         queue_.push(std::move(value));
     }
 
-    // 批量取出数据（阻塞方式）
     bool pop_batch(std::vector<T>& batch, int batch_size) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (queue_.empty()) return false;
@@ -51,12 +51,28 @@ private:
     mutable std::mutex mutex_;
 };
 
+// 线程安全的k-mer统计
+class ThreadSafeKmerStats {
+public:
+    void increment(uint64_t kmer_index) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        counts_[kmer_index]++;
+    }
+
+    const std::unordered_map<uint64_t, uint64_t>& get_counts() const {
+        return counts_;
+    }
+
+private:
+    std::unordered_map<uint64_t, uint64_t> counts_;
+    mutable std::mutex mutex_;
+};
+
 // 线程安全的输出存储
 class ThreadSafeOutput {
 public:
     void add_result(const std::string& id, const robin_hood::unordered_set<uint64_t>& index_set) {
         std::lock_guard<std::mutex> lock(mutex_);
-        // 将 unordered_set 转换为 vector
         std::vector<uint64_t> indices(index_set.begin(), index_set.end());
         results_.emplace_back(id, std::move(indices));
     }
@@ -64,7 +80,6 @@ public:
     void write_to_file(const std::string& filename) {
         std::ofstream outfile(filename, std::ios::binary);
         
-        // 文件头 (16字节)
         const char magic[4] = {'K','M','E','R'};
         const uint8_t version = 1;
         const char reserved[3] = {0};
@@ -72,28 +87,23 @@ public:
         outfile.write(reinterpret_cast<const char*>(&version), 1);
         outfile.write(reserved, 3);
         
-        // 写入记录总数 (8字节)
         uint64_t total_records = results_.size();
         outfile.write(reinterpret_cast<const char*>(&total_records), 8);
         
         for (const auto& [id, indices] : results_) {
-            // 确保ID是ASCII可打印字符
             if (!std::all_of(id.begin(), id.end(), [](char c) {
-                return c >= 32 && c <= 126; // ASCII可打印范围
+                return c >= 32 && c <= 126;
             })) {
                 throw std::runtime_error("ID contains non-ASCII characters");
             }
             
-            // 写入ID长度(2B)和内容
             uint16_t id_len = id.size();
             outfile.write(reinterpret_cast<const char*>(&id_len), 2);
             outfile.write(id.data(), id_len);
             
-            // 写入k-mer索引数(4B)
             uint32_t index_count = indices.size();
             outfile.write(reinterpret_cast<const char*>(&index_count), 4);
             
-            // 写入k-mer索引
             for (const auto& index : indices) {
                 uint64_t index_val = index;
                 outfile.write(reinterpret_cast<const char*>(&index_val), 8);
@@ -145,12 +155,11 @@ void read_sequences(const std::string& filename, ThreadSafeQueue<SequenceRecord>
                     queue.push(SequenceRecord{current_id, current_seq});
                 }
                 
-                // 修改点：只保留第一个空格/tab前的内容
                 size_t first_space = line.find_first_of(" \t");
                 if (first_space != std::string::npos) {
-                    current_id = line.substr(1, first_space - 1); // 去掉>和后面的空格
+                    current_id = line.substr(1, first_space - 1);
                 } else {
-                    current_id = line.substr(1); // 没有空格则取整行
+                    current_id = line.substr(1);
                 }
                 
                 current_seq.clear();
@@ -158,7 +167,6 @@ void read_sequences(const std::string& filename, ThreadSafeQueue<SequenceRecord>
                 current_seq += line;
             }
         } else {
-            // FASTQ格式处理保持不变
             if (line[0] == '@') {
                 current_id = line.substr(1);
                 std::getline(file, current_seq);
@@ -173,6 +181,30 @@ void read_sequences(const std::string& filename, ThreadSafeQueue<SequenceRecord>
         queue.push(SequenceRecord{current_id, current_seq});
     }
 }
+
+void writeKmerStatsToBinary(const std::unordered_map<uint64_t, uint64_t>& kmer_record_counts, 
+                           const std::string& filename) {
+    std::ofstream outfile(filename, std::ios::binary);
+    if (!outfile.is_open()) {
+        std::cerr << "无法打开文件: " << filename << std::endl;
+        return;
+    }
+
+    
+    // 遍历所有k-mer
+    for (const auto& [kmer_index, count] : kmer_record_counts) {
+        
+        // 写入k-mer索引
+        outfile.write(reinterpret_cast<const char*>(&kmer_index), sizeof(kmer_index));
+        // 写入记录数量
+        outfile.write(reinterpret_cast<const char*>(&count), sizeof(count));
+        
+    }
+    
+    outfile.close();
+}
+
+
 
 int main(int argc, char* argv[]) {
     std::ios_base::sync_with_stdio(false);
@@ -221,6 +253,7 @@ int main(int argc, char* argv[]) {
     ThreadSafeQueue<SequenceRecord> work_queue;
     std::atomic<bool> done_reading{false};
     ThreadSafeOutput global_output;
+    ThreadSafeKmerStats global_kmer_stats;  // 线程安全的统计
 
     // 生产者线程
     std::thread producer([&]() {
@@ -264,7 +297,10 @@ int main(int argc, char* argv[]) {
                 }
 
                 if (current_kmer != UINT64_MAX && kmer_to_index.count(current_kmer)) {
-                    index_set.insert(kmer_to_index[current_kmer]);
+                    uint64_t kmer_index = kmer_to_index[current_kmer];
+                    if (index_set.insert(kmer_index).second) {
+                        global_kmer_stats.increment(kmer_index);
+                    }
                 }
 
                 // 滑动窗口
@@ -279,11 +315,12 @@ int main(int argc, char* argv[]) {
                     }
 
                     if (current_kmer != UINT64_MAX && kmer_to_index.count(current_kmer)) {
-                        index_set.insert(kmer_to_index[current_kmer]);
+                        uint64_t kmer_index = kmer_to_index[current_kmer];
+                        if (index_set.insert(kmer_index).second) {
+                            global_kmer_stats.increment(kmer_index);
+                        }
                     }
                 }
-
-                // 将结果存入内存
                 global_output.add_result(record.id, index_set);
             }
         }
@@ -301,6 +338,9 @@ int main(int argc, char* argv[]) {
         t.join();
     }
 
+    // 获取最终的统计结果并写入文件
+    writeKmerStatsToBinary(global_kmer_stats.get_counts(), fs::path(output_dir) / "kmer_frequency.bin");
+    
     // 将所有结果写入最终文件
     global_output.write_to_file(fs::path(output_dir) / "output.bin");
 
