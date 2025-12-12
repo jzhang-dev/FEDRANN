@@ -51,22 +51,33 @@ private:
     mutable std::mutex mutex_;
 };
 
-// 线程安全的k-mer统计
+using LocalKmerStats = std::unordered_map<uint64_t, uint64_t>; 
+
 class ThreadSafeKmerStats {
 public:
-    void increment(uint64_t kmer_index) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        counts_[kmer_index]++;
-    }
+    // 1. 【核心功能】安全地合并本地统计结果
+    void merge(const LocalKmerStats& local_counts) {
+        // 这是正确的，只在这里使用一次锁，大大减少竞争。
+        std::lock_guard<std::mutex> lock(mutex_); 
+        for (const auto& pair : local_counts) {
+            counts_[pair.first] += pair.second;
+        }
+    } 
 
-    const std::unordered_map<uint64_t, uint64_t>& get_counts() const {
-        return counts_;
+    // 2. 安全地获取最终结果（返回副本以确保线程安全读取）
+    std::unordered_map<uint64_t, uint64_t> get_counts() const {
+        std::lock_guard<std::mutex> lock(mutex_); 
+        return counts_; 
     }
+    
+    // 3. 移除或私有化 increment() 方法，因为消费者线程不再需要它。
+    // 如果不移除，请确保它也是线程安全的。
 
 private:
     std::unordered_map<uint64_t, uint64_t> counts_;
     mutable std::mutex mutex_;
 };
+
 
 // 线程安全的输出存储
 class ThreadSafeOutput {
@@ -269,6 +280,7 @@ int main(int argc, char* argv[]) {
     // 消费者线程函数
     auto consumer = [&]() {
         std::vector<SequenceRecord> batch;
+        LocalKmerStats local_kmer_stats;
         batch.reserve(BATCH_SIZE);
 
         while (true) {
@@ -297,11 +309,11 @@ int main(int argc, char* argv[]) {
                 }
 
                 if (current_kmer != UINT64_MAX && kmer_to_index.count(current_kmer)) {
-                    uint64_t kmer_index = kmer_to_index[current_kmer];
+                    uint64_t kmer_index = kmer_to_index.at(current_kmer); // 使用 .at() 或 []
                     if (index_set.insert(kmer_index).second) {
-                        global_kmer_stats.increment(kmer_index);
+                        local_kmer_stats[kmer_index]++; // <-- 更新本地
+                        }
                     }
-                }
 
                 // 滑动窗口
                 for (int i = K; i < record.sequence.size(); ++i) {
@@ -315,15 +327,16 @@ int main(int argc, char* argv[]) {
                     }
 
                     if (current_kmer != UINT64_MAX && kmer_to_index.count(current_kmer)) {
-                        uint64_t kmer_index = kmer_to_index[current_kmer];
+                        uint64_t kmer_index = kmer_to_index.at(current_kmer); // 使用 .at() 或 []
                         if (index_set.insert(kmer_index).second) {
-                            global_kmer_stats.increment(kmer_index);
+                            local_kmer_stats[kmer_index]++; // <-- 更新本地
+                            }
                         }
-                    }
                 }
                 global_output.add_result(record.id, index_set);
             }
         }
+        global_kmer_stats.merge(local_kmer_stats);
     };
 
     // 启动消费者线程

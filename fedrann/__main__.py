@@ -125,10 +125,10 @@ def parse_command_line_arguments():
         default=1,
     )
     parser.add_argument(
-        "--chunck-size",
+        "--chunk-size",
         type=int,
         required=False,
-        default=100000,
+        default=1000,
     )
 
     parser.add_argument(
@@ -329,7 +329,7 @@ def run_fedrann_pipeline(
     nndescent_n_neighbors: int,
     save_feature_matrix: bool,
     keep_intermediates: bool,
-    chunck_size: int
+    chunk_size: int
 ):
     """
     Run the SeqNeighbor pipeline with the specified parameters.
@@ -358,7 +358,7 @@ def run_fedrann_pipeline(
         precompute_matrix=precompute_mat,
         kmer_count=n_features,
         read_count=read_count,
-        chunck_size=chunck_size
+        chunk_size=chunk_size
     )
 
     # # Save metadata
@@ -445,7 +445,7 @@ def main():
         nndescent_n_neighbors=args.nndescent_n_neighbors,
         keep_intermediates=args.keep_intermediates,
         save_feature_matrix=args.save_feature_matrix,
-        chunck_size=args.chunck_size
+        chunk_size=args.chunk_size
     )
     if args.mprof:
         logger.debug("Attention: Memory profiling enabled. Running with memory profiler.")

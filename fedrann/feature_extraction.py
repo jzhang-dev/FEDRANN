@@ -1,7 +1,7 @@
 import gzip, json, collections, gc, os
 from typing import Sequence, Mapping, Collection, Optional, Iterable
 from os.path import join
-from multiprocessing import Pool, shared_memory
+from multiprocessing import Pool, Manager, Array
 from functools import partial
 from array import array
 from Bio import SeqIO
@@ -14,16 +14,13 @@ from numba import njit
 import ahocorasick
 import sharedmem
 import struct
+import ctypes
 
 from .fastx_io import (
     FastqLoader,
     FastaLoader,
     get_reverse_complement_record,
-    FastxRecord,
-    reverse_complement,
-    unzip,
-    convert_fastq_to_fasta,
-    make_fasta_index,
+    FastxRecord
 )
 from . import global_variables
 from .custom_logging import logger
@@ -143,56 +140,51 @@ def parse_kmer_searcher_output(ks_file: str, kmer_count):
             yield id_str, rev_indices, 1
                 
 
-# def get_feature_matrix(
-#     ks_file: str,
-#     precompute_matrix: np.ndarray,
-#     kmer_count: int,
-#     read_count: int,
-#     embedding_dimensions: int
-# ):
-#     # Get features
-#     read_names = []
-#     strands = []
-#     feature_matrix = np.empty((read_count*2, embedding_dimensions), dtype=np.float32)
-#     for i, (name, indices, strand) in enumerate(
-#         parse_kmer_searcher_output(ks_file, kmer_count/2)
-#     ):
-#         data = np.ones(len(indices), dtype=np.int8)
-#         cols = np.array(indices)
-#         rows = np.zeros(len(indices), dtype=np.int32)
-#         one_read_feature = csr_matrix((data, (rows, cols)), shape=(1, kmer_count))        
-           
-#         dr_feature = one_read_feature.dot(precompute_matrix)
+
+# --- 1. 定义全局共享变量和初始化函数 ---
+
+# 全局变量，用于在每个子进程中存储 precompute_matrix 的视图
+global_precompute_matrix = None
+global_kmer_count = None
+
+
+def init_worker(shared_data_base, shared_indices_base, shared_indptr_base, matrix_shape, kmer_count):
+    global global_precompute_matrix
+    global global_kmer_count
+    
+    data_view = np.frombuffer(shared_data_base, dtype=np.float32)
+    
+    indices_view = np.frombuffer(shared_indices_base, dtype=np.int64)
+    indptr_view = np.frombuffer(shared_indptr_base, dtype=np.int64)
+    
+    global_precompute_matrix = csr_matrix(
+        (data_view, indices_view, indptr_view), 
+        shape=matrix_shape
+    )
+    
+    global_kmer_count = kmer_count
+    
+def process_read_chunk_optimized(task):
+    """
+    处理一个数据块，从全局变量中访问 precompute_matrix。
+    task: (数据块, start_index)
+    """
+    chunk_data, start_index = task
+    
+    global global_precompute_matrix 
+    global global_kmer_count
+    
+    # ⚠️ 从全局变量中获取 precompute_matrix 和 kmer_count
+    precompute_matrix = global_precompute_matrix
+    kmer_count = global_kmer_count
         
-#         # logger.debug(f"{dr_feature.shape=}")
-#         feature_matrix[i,:] = dr_feature.toarray()
-#         read_names.append(name)
-#         strands.append(strand)
-
-#         if (i+1) % 100000 == 0:
-#             logger.debug(f"Processed {i+1} records.")
-
-#     return feature_matrix, read_names, strands
-
-
-def process_read_chunk_simple(task):
-    """
-    处理一个数据块（多条 reads），返回计算结果和读长信息。
-    
-    Args:
-        task (tuple): (数据块, precompute_matrix, kmer_count)
-    """
-    chunk_data, precompute_matrix, kmer_count, start_index = task
-    
     # 1. 收集数据，准备批量构建稀疏矩阵
     all_data = []
     all_cols = []
     all_rows = [] 
     current_row_in_chunk = 0
     
-    # chunk_data 是 (name, indices, strand) 的列表
     for indices in chunk_data:
-        # A. 收集数据
         if len(indices) == 0:
             continue
             
@@ -203,7 +195,9 @@ def process_read_chunk_simple(task):
         current_row_in_chunk += 1
 
     if not all_data:
-        return np.empty((0, precompute_matrix.shape[1]), dtype=precompute_matrix.dtype), []
+        # 返回空的 NumPy 数组和 start_index，注意形状要与 M 匹配
+        M = precompute_matrix.shape[1] 
+        return np.empty((0, M), dtype=precompute_matrix.dtype), start_index
 
     # 2. 一次性构建稀疏矩阵 A_chunk
     N_chunk = current_row_in_chunk
@@ -212,54 +206,81 @@ def process_read_chunk_simple(task):
     
     # 3. 一次性进行点积运算
     R_chunk = A_chunk.dot(precompute_matrix) 
-    logger.debug(f"processed one batch: {start_index=}")
+    if start_index % 100000 == 0:
+        logger.debug(f"{start_index} sequences have been processed.")
 
     # 4. 返回密集数组和读长信息
     return R_chunk.toarray(), start_index
 
-# --- 主程序并行处理 ---
+
 def get_feature_matrix(
     ks_file: str,
-    precompute_matrix: np.ndarray,
+    precompute_matrix,
     kmer_count: int,
     read_count: int,
-    chunck_size: int
+    chunk_size: int
 ):
     M = precompute_matrix.shape[1]
-    feature_matrix = np.empty((read_count*2, M), dtype=np.float32)
-    
-    
-    # 1. 准备任务块
-    all_reads_iterator = parse_kmer_searcher_output(ks_file, kmer_count / 2)
-    
-    tasks = []
-    chunk_data = []
-        
-    # 划分任务并准备参数元组
-    for i, item in enumerate(all_reads_iterator):
-        
-        chunk_data.append(item[1])
-        
-        if len(chunk_data) >= chunck_size:
-            # 任务元组: (数据块, precompute_matrix, kmer_count)
-            task = (chunk_data, precompute_matrix, kmer_count, i + 1 - len(chunk_data))
-            tasks.append(task)
-            chunk_data = [] # 重置数据块
+    feature_matrix = np.empty((read_count*2, M), dtype=np.float32) # read_count 应该是任务数/读数
 
-    # 处理最后一个不完整的块
-    if chunk_data:
-        task = (chunk_data, precompute_matrix, kmer_count, i + 1 - len(chunk_data))
-        tasks.append(task)
+# 1. 提取 CSR 矩阵的底层数组
+    precompute_matrix_csr = precompute_matrix.tocsr() 
+    data = precompute_matrix_csr.data
+    indices = precompute_matrix_csr.indices
+    indptr = precompute_matrix_csr.indptr
+    shape = precompute_matrix_csr.shape
 
-    # 2. 创建进程池并启动并行计算
-    num_processes = global_variables.threads
-    logger.debug(f"Starting parallel processing with {num_processes} processes and {len(tasks)} tasks.")
+    # data (np.float32 -> ctypes.c_float)
+    # 从 NumPy 数组直接创建共享数组，避免手动写入
+    shared_data = Array(ctypes.c_float, data, lock=False) 
 
+    # indices (np.int64 -> ctypes.c_longlong)
+    shared_indices = Array(ctypes.c_longlong, indices, lock=False) 
+
+    # indptr (np.int64 -> ctypes.c_longlong)
+    shared_indptr = Array(ctypes.c_longlong, indptr, lock=False)
+
+    # B. 创建任务生成器 (解决任务列表一次性加载)
     
-    with Pool(processes=num_processes) as pool:
-        # pool.imap_unordered 启动并行计算，无需保持顺序
-        # result 是 (R_chunk.toarray(), names_and_strands)
-        results = pool.imap_unordered(process_read_chunk_simple, tasks)
+    # 将任务块的生成改为一个生成器函数
+    def task_generator(ks_file, kmer_count, chunk_size):
+        all_reads_iterator = parse_kmer_searcher_output(ks_file, kmer_count / 2)
+        chunk_data = []
+        # 从 0 开始计数，因为它是 feature_matrix 的行索引
+        start_index = 0 
+        
+        for i, item in enumerate(all_reads_iterator):
+            # item[1] 是 indices
+            chunk_data.append(item[1]) 
+            
+            if len(chunk_data) >= chunk_size:
+                # 任务元组只包含数据块和起始索引
+                yield (chunk_data, start_index)
+                start_index += len(chunk_data) # 更新起始索引
+                chunk_data = [] # 重置数据块
+
+        # 处理最后一个不完整的块
+        if chunk_data:
+            yield (chunk_data, start_index)
+            
+    tasks = task_generator(ks_file, kmer_count, chunk_size)
+
+    # C. 启动进程池
+    num_processes = global_variables.threads 
+    logger.debug(f"Starting parallel processing with {num_processes} processes.")
+
+    # 进程池初始化参数：共享内存对象, 数组形状, kmer_count
+    init_args = (
+        shared_data, 
+        shared_indices, 
+        shared_indptr, 
+        shape, # Python tuple, 自动序列化
+        kmer_count
+    )
+    with Pool(processes=num_processes, initializer=init_worker, initargs=init_args) as pool:
+        # ⚠️ 使用 imap_unordered 接受生成器作为输入
+        # 进程会按需从 tasks 生成器中获取任务，不会一次性加载所有任务
+        results = pool.imap_unordered(process_read_chunk_optimized, tasks)
         
         # 3. 收集结果
         for feature_array, start_index in results:
@@ -267,8 +288,9 @@ def get_feature_matrix(
             if N_chunk > 0:
                 end_index = start_index + N_chunk
                 feature_matrix[start_index:end_index, :] = feature_array
-                    
+                        
     return feature_matrix
+
 
 def get_metadata(ks_file: str, kmer_count: int):
     read_names = []
