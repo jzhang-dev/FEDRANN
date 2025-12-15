@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 threads: int = 1
+nearest_neighbor_threads: int = 1
 seed: int = 5349875
 output_dir: str = ""
 temp_dir: str = ""

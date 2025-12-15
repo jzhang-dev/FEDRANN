@@ -206,7 +206,7 @@ def process_read_chunk_optimized(task):
     
     # 3. 一次性进行点积运算
     R_chunk = A_chunk.dot(precompute_matrix) 
-    if start_index % 100000 == 0:
+    if start_index % 100000 == 0 and start_index != 0:
         logger.debug(f"{start_index} sequences have been processed.")
 
     # 4. 返回密集数组和读长信息

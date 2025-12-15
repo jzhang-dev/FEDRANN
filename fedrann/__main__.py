@@ -88,14 +88,7 @@ def parse_command_line_arguments():
         required=True,
         help="Directory to save output files.",
     )
-    # parser.add_argument(
-    #     "-p",
-    #     "--preprocess",
-    #     type=str,
-    #     required=False,
-    #     default="IDF",
-    #     help="Preprocess method you want to implement to matrix.(TF/IDF/TF-IDF/None/count)",
-    # )
+
     parser.add_argument(
         "-k",
         "--kmer-size",
@@ -125,6 +118,12 @@ def parse_command_line_arguments():
         default=1,
     )
     parser.add_argument(
+        "--nearest-neighbor-threads",
+        type=int,
+        required=False,
+        default=1,
+    )
+    parser.add_argument(
         "--chunk-size",
         type=int,
         required=False,
@@ -137,12 +136,6 @@ def parse_command_line_arguments():
         type=int,
         required=False,
         default=500,
-    )
-    parser.add_argument(
-        "--knn",
-        type=str,
-        required=False,
-        default="NNDescent",
     )
     parser.add_argument(
         "--nndescent-n-trees",
@@ -189,34 +182,28 @@ def parse_command_line_arguments():
 
 def get_neighbors_ava(
     embedding_matrix: NDArray,
-    method: str,
     nndescent_n_trees: int,
     nndescent_n_neighbors: int,
     leaf_size: int = 200,
 ) -> tuple[NDArray, NDArray]:
-    if method.lower() == "nndescent":
-        logger.info(
-            f"Using NNDescent method to find nearest neighbors (n_trees = {nndescent_n_trees}, left_size = {leaf_size})"
-        )
-        neighbor_indices, distances = NNDescent_ava().get_neighbors(
-            embedding_matrix,
-            metric="cosine",
-            index_n_neighbors=nndescent_n_neighbors,
-            n_trees=nndescent_n_trees,
-            leaf_size=leaf_size,
-            n_iters=None,
-            diversify_prob=1.0,
-            pruning_degree_multiplier=1.5,
-            low_memory=True,
-            n_jobs=global_variables.threads,
-            seed=global_variables.seed,
-            verbose=True,
-        )
-    elif method.lower() == "hnsw":
-        logger.info("Using HNSW method to find nearest neighbors.")
-        raise NotImplementedError()
-    else:
-        raise ValueError(f"Invalid method: {method}. Expected 'nndescent' or 'hnsw'.")
+    logger.info(
+        f"Using NNDescent method to find nearest neighbors (n_trees = {nndescent_n_trees}, left_size = {leaf_size})"
+    )
+    neighbor_indices, distances = NNDescent_ava().get_neighbors(
+        embedding_matrix,
+        metric="cosine",
+        index_n_neighbors=nndescent_n_neighbors,
+        n_trees=nndescent_n_trees,
+        leaf_size=leaf_size,
+        n_iters=None,
+        diversify_prob=1.0,
+        pruning_degree_multiplier=1.5,
+        low_memory=True,
+        n_jobs=global_variables.nearest_neighbor_threads,
+        seed=global_variables.seed,
+        verbose=True,
+    )
+
     return neighbor_indices, distances
 
 
@@ -324,7 +311,6 @@ def run_fedrann_pipeline(
     kmer_sample_fraction: float,
     kmer_min_multiplicity: int,
     embedding_dimension: int,
-    knn: str,
     nndescent_n_trees: int,
     nndescent_n_neighbors: int,
     save_feature_matrix: bool,
@@ -377,7 +363,6 @@ def run_fedrann_pipeline(
     logger.info("--- 4. Nearest Neighbors Search ---")
     neighbor_matrix, distances = get_neighbors_ava(
         embedding_matrix,
-        method=knn,
         nndescent_n_trees=nndescent_n_trees,
         nndescent_n_neighbors=nndescent_n_neighbors,
     )
@@ -412,6 +397,7 @@ def main():
     args = parse_command_line_arguments()
     global_variables.threads = args.threads
     global_variables.seed = args.seed
+    global_variables.nearest_neighbor_threads = args.nearest_neighbor_threads
 
     if not which("kmer_searcher"):
         raise RuntimeError("Unable to find 'kmer_searcher' executable.")
@@ -440,7 +426,6 @@ def main():
         kmer_sample_fraction=args.kmer_sample_fraction,
         kmer_min_multiplicity=args.kmer_min_multiplicity,
         embedding_dimension=args.embedding_dimension,
-        knn=args.knn,
         nndescent_n_trees=args.nndescent_n_trees,
         nndescent_n_neighbors=args.nndescent_n_neighbors,
         keep_intermediates=args.keep_intermediates,
