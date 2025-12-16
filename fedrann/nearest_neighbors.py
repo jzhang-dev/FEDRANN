@@ -11,6 +11,12 @@ from math import ceil
 import time
 from scipy.sparse._csr import csr_matrix
 
+@dataclass
+class _NearestNeighbors:
+    def get_neighbors(
+        self, ref: np.ndarray, que: np.ndarray, n_neighbors: int
+    ) -> np.ndarray:
+        raise NotImplementedError()
 
 
 class NNDescent_ava(_NearestNeighbors):

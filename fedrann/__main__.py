@@ -34,11 +34,7 @@ from .feature_extraction import (
 )
 from .count_kmers import run_kmer_searcher
 from .precompute import get_precompute_matrix
-from .nearest_neighbors import (
-    ExactNearestNeighbors,
-    NNDescent_ava,
-    HNSW,
-)
+from .nearest_neighbors import NNDescent_ava
 from . import global_variables
 from .custom_logging import logger, add_log_file
 
@@ -188,6 +184,9 @@ def get_neighbors_ava(
 ) -> tuple[NDArray, NDArray]:
     logger.info(
         f"Using NNDescent method to find nearest neighbors (n_trees = {nndescent_n_trees}, left_size = {leaf_size})"
+    )
+    logger.info(
+        f"Using {global_variables.nearest_neighbor_threads} threads"
     )
     neighbor_indices, distances = NNDescent_ava().get_neighbors(
         embedding_matrix,
