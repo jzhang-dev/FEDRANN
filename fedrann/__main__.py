@@ -330,9 +330,10 @@ def run_fedrann_pipeline(
     logger.debug(f"kmer_searcher n_features: {n_features}")
     
     logger.info("--- 2. Generate dimension reduction and IDF matrix ---")
+    fwd_kmer_library_path = join(global_variables.temp_dir, "fwd_kmer_library.fasta")
     precompute_mat,n_features = get_precompute_matrix(
         n_components=embedding_dimension,
-        counter_file=kmer_counter_path,
+        counter_file=fwd_kmer_library_path,
         n_features=n_features
     )
     logger.debug(f"get_precompute_matrix n_features: {n_features}")
