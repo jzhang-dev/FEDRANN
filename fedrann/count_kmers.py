@@ -140,16 +140,11 @@ def run_kmer_searcher(
 
     logger.debug("Parsing kmer_searcher output")
     kmer_searcher_output_path = join(kmer_searcher_output_dir, "output.bin")
-    kmer_counter_path = join(kmer_searcher_output_dir, "kmer_frequency.bin") 
     if not isfile(kmer_searcher_output_path):
         raise RuntimeError(
             f"kmer_searcher output file not found: {kmer_searcher_output_path}"
         )
         
-    if not isfile(kmer_counter_path):
-        raise RuntimeError(
-            f"kmer_searcher output file not found: {kmer_counter_path}"
-        )
     
     read_count = fasta_count_grep(input_fasta_path)
-    return kmer_searcher_output_path, kmer_counter_path, kmer_count*2, read_count
+    return kmer_searcher_output_path, kmer_count*2, read_count

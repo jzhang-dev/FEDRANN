@@ -75,7 +75,6 @@ def get_precompute_matrix(
         result_array[kmer_index] = count
     
     idf = np.log((n_features) / (result_array + 1e-12)).astype(np.float32)
-    logger.debug(f"{idf.shape=}")
 
     if density == "auto":
         _density = 1 / math.sqrt(n_features)
