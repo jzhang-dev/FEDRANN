@@ -20,26 +20,6 @@ from typing import Iterator
 
 from .custom_logging import logger
 
-## use kmer searcher to count kmers from fasta/fastq file
-# def kmer_count_generator(filename):
-#     """
-#     生成器函数，逐条产生k-mer计数
-#     """
-#     with open(filename, 'rb') as f:
-#         while True:
-#             kmer_bytes = f.read(8)
-#             if not kmer_bytes:
-#                 break
-#             count_bytes = f.read(8)
-#             if not count_bytes:
-#                 break
-                
-#             kmer_index = struct.unpack('<Q', kmer_bytes)[0]
-#             count = struct.unpack('<Q', count_bytes)[0]
-            
-#             yield kmer_index, count
-
-## use jellyfish to count kmers from fasta/fastq file
 
 def kmer_count_generator(filename: str,kmer_count: int):
     i = 0

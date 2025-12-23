@@ -37,6 +37,7 @@ from .precompute import get_precompute_matrix
 from .nearest_neighbors import NNDescent_ava
 from . import global_variables
 from .custom_logging import logger, add_log_file
+from .align import get_overlap_candidates,run_multiprocess_alignment,cWeightedSemiglobalAligner
 
 
 logger.setLevel(logging.DEBUG)
@@ -262,6 +263,7 @@ def get_metadata_table(
 def get_output_dataframe(
     neighbor_matrix: NDArray,
     read_names: List[str],
+    read_lengths: List[int],
     strands: list[int],
 ) -> pd.DataFrame:
     query_names = []
@@ -269,26 +271,35 @@ def get_output_dataframe(
     ranks = []
     query_orientations = []
     target_orientations = []
-
+    query_lengths = []
+    target_lengths = []
+    
     for query_index in range(0, neighbor_matrix.shape[0]):
         query_name = read_names[query_index]
-        neighbors = neighbor_matrix[query_index]
+        query_length = read_lengths[query_index]
         query_orientation = ["+", "-"][strands[query_index]]
+        
+        neighbors = neighbor_matrix[query_index]
         for rank, target_index in enumerate(neighbors):
             if target_index == query_index:
                 continue
             target_name = read_names[target_index]
+            target_length = read_lengths[target_index]
             target_orientation = ["+", "-"][strands[target_index]]
             query_names.append(query_name)
             query_orientations.append(query_orientation)
+            query_lengths.append(query_length)
             target_names.append(target_name)
             target_orientations.append(target_orientation)
+            target_lengths.append(target_length)
             ranks.append(rank)
 
     columns = {
         "query_name": query_names,
+        "query_length": query_lengths,
         "query_orientation": query_orientations,
         "target_name": target_names,
+        "target_length": target_lengths,
         "target_orientation": target_orientations,
         "neighbor_rank": ranks,
     }
@@ -355,18 +366,37 @@ def run_fedrann_pipeline(
     del embedding_matrix
     gc.collect()
 
+    # logger.info("--- 5. Align candidates ---")
+    
+    # overlap_candidates = get_overlap_candidates(neighbor_matrix,nndescent_n_neighbors)
+    # encoded_reads = []
+    # marker_weights = []
+    # alignment_dict = run_multiprocess_alignment(
+    #     overlap_candidates,
+    #     encoded_reads,
+    #     marker_weights,
+    #     aligner=cWeightedSemiglobalAligner,
+    #     align_kw=dict(max_cells=10**alignment_max_cells),
+    #     traceback=False,
+    #     processes=global_variables.threads,
+    #     batch_size=100,
+    #     max_total_wait_seconds=600,
+    # )
+    
     # Save output
     nbr_output_file = join(output_dir, "overlaps.tsv")
     logger.debug("Saving overlap table to %s", nbr_output_file)
 
-    read_names,strands = get_metadata(
+    read_names, read_lengths, strands = get_metadata(
         ks_file=kmer_searcher_output_path,
-        kmer_count=n_features,
+        fasta_file=input_path,
+        kmer_count=n_features
     )
     
     df = get_output_dataframe(
         neighbor_matrix=neighbor_matrix, 
         read_names=read_names, 
+        read_lengths=read_lengths,
         strands=strands
     )
     

@@ -25,45 +25,6 @@ from .fastx_io import (
 from . import global_variables
 from .custom_logging import logger
 
-
-def load_reads(
-    file_path: str, batch_size: int
-) -> Iterable[tuple[int, list[FastxRecord]]]:
-    if (
-        file_path.endswith(".fasta")
-        or file_path.endswith(".fa")
-        or file_path.endswith(".fasta.gz")
-        or file_path.endswith(".fa.gz")
-    ):
-        # Load FASTA file
-        loader = FastaLoader(file_path=file_path)
-    elif (
-        file_path.endswith(".fastq")
-        or file_path.endswith(".fq")
-        or file_path.endswith(".fastq.gz")
-        or file_path.endswith(".fq.gz")
-    ):
-        loader = FastqLoader(file_path=file_path)
-    else:
-        raise ValueError(
-            "Unsupported file format. Please provide a FASTA or FASTQ file."
-        )
-    i0 = 0
-    batch_count = 0
-    batch = []
-    for record in loader:  # 迭代获取每条序列
-        batch.append(record)
-        batch.append(get_reverse_complement_record(record))
-        if len(batch) >= batch_size:
-            yield i0, batch
-            i0 += len(batch)
-            batch = []
-            batch_count += 1
-    yield i0, batch
-    i0 += len(batch)
-    logger.debug(f"Loaded {i0} records from {file_path} ({batch_count=} batches)")
-
-
 @njit
 def get_common_values(
     target: NDArray[np.uint64], query: NDArray[np.uint64]
@@ -292,11 +253,16 @@ def get_feature_matrix(
     return feature_matrix
 
 
-def get_metadata(ks_file: str, kmer_count: int):
+def get_metadata(ks_file: str, fasta_file: str, kmer_count: int):
     read_names = []
     strands = []
+    read_lengths = []
     all_reads_iterator = parse_kmer_searcher_output(ks_file, kmer_count / 2)
+    read_length = {}
+    for record in FastaLoader(fasta_file):
+        read_length[record.name] = len(record.sequence)
     for item in all_reads_iterator:
         read_names.append(item[0])
+        read_lengths.append(read_length[item[0]])
         strands.append(item[2])
-    return read_names,strands
+    return read_names, read_lengths, strands
