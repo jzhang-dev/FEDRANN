@@ -25,6 +25,7 @@ from scipy.sparse._csr import csr_matrix
 from memory_profiler import memory_usage
 from numpy.typing import NDArray
 import logging
+from itertools import islice
 
 from . import __version__, __description__
 
@@ -37,7 +38,13 @@ from .precompute import get_precompute_matrix
 from .nearest_neighbors import NNDescent_ava
 from . import global_variables
 from .custom_logging import logger, add_log_file
-from .align import get_overlap_candidates,run_multiprocess_alignment,cWeightedSemiglobalAligner
+from .align import (
+    Seq,
+    get_overlap_candidates,
+    run_multiprocess_alignment,
+    cWeightedSemiglobalAligner,
+    AlignmentResult
+    )
 
 
 logger.setLevel(logging.DEBUG)
@@ -261,49 +268,80 @@ def get_metadata_table(
     return metadata_df
 
 def get_output_dataframe(
-    neighbor_matrix: NDArray,
-    read_names: List[str],
-    read_lengths: List[int],
-    strands: list[int],
+    overlap_candidates: list[Tuple],
+    reads_info_dict: Mapping[int, Seq],      
+    alignment_dict: Mapping[Tuple, AlignmentResult]
 ) -> pd.DataFrame:
     query_names = []
     target_names = []
-    ranks = []
-    query_orientations = []
-    target_orientations = []
     query_lengths = []
     target_lengths = []
+    query_starts = []
+    query_ends = []
+    target_starts = []
+    target_ends = []
+    identities = []
+    align_orientations = []
+    match_bases = []
+    match_lengths = []
+    qualities = []
     
-    for query_index in range(0, neighbor_matrix.shape[0]):
-        query_name = read_names[query_index]
-        query_length = read_lengths[query_index]
-        query_orientation = ["+", "-"][strands[query_index]]
+    aligned_candidates = set(alignment_dict.keys())
+    aligned_candidates_num = len(aligned_candidates)
+    all_candidates_num = len(overlap_candidates)
+    
+    for (query_index,target_index) in overlap_candidates:
+        if (query_index, target_index) not in aligned_candidates:
+            continue
         
-        neighbors = neighbor_matrix[query_index]
-        for rank, target_index in enumerate(neighbors):
-            if target_index == query_index:
-                continue
-            target_name = read_names[target_index]
-            target_length = read_lengths[target_index]
-            target_orientation = ["+", "-"][strands[target_index]]
-            query_names.append(query_name)
-            query_orientations.append(query_orientation)
-            query_lengths.append(query_length)
-            target_names.append(target_name)
-            target_orientations.append(target_orientation)
-            target_lengths.append(target_length)
-            ranks.append(rank)
+        query_seq = reads_info_dict[query_index]
+        assert query_seq.read_id == query_index
+        query_name = query_seq.read_name
+        query_length = query_seq.length
+        query_orientation = query_seq.strand
+                
+        target_seq = reads_info_dict[target_index]
+        target_name = target_seq.read_name
+        target_length = target_seq.length
+        target_orientation = target_seq.strand
+        assert target_seq.read_id == target_index
+        
+        align_result = alignment_dict[(query_index,target_index)] 
+        assert align_result.end_1 <= query_seq.length
+        assert align_result.end_2 <= target_seq.length
+        query_names.append(query_name)
+        query_lengths.append(query_length)
+        query_starts.append(align_result.start_1)
+        query_ends.append(align_result.end_1)
+        
+        target_names.append(target_name)
+        target_lengths.append(target_length)
+        target_starts.append(align_result.start_2)
+        target_ends.append(align_result.end_2)
+        
+        identities.append(align_result.identity)
+        match_bases.append(align_result.match_base_num)
+        match_lengths.append(align_result.match_length)
+        
+        align_orientations.append('+' if query_orientation == target_orientation else '-')
+        qualities.append(align_result.mapq)
 
     columns = {
         "query_name": query_names,
         "query_length": query_lengths,
-        "query_orientation": query_orientations,
+        "query_start": query_starts,
+        "query_end": query_ends,
+        "relative_strand": align_orientations,
         "target_name": target_names,
         "target_length": target_lengths,
-        "target_orientation": target_orientations,
-        "neighbor_rank": ranks,
+        "target_start": target_starts,
+        "target_end": target_ends,
+        "match_base": match_bases,
+        "match_length": match_lengths,
+        "quality": qualities
     }
     df = pd.DataFrame(columns)
+    logger.debug(f"{all_candidates_num=},{aligned_candidates_num=},{aligned_candidates_num/all_candidates_num=}")
     logger.debug(f"Output DataFrame shape: {df.shape}")
     return df
 
@@ -344,11 +382,13 @@ def run_fedrann_pipeline(
     logger.info("--- 3. Generate feature matrix ---")
     embedding_matrix = get_feature_matrix(
         ks_file=kmer_searcher_output_path,
+        fasta_file=input_path,
         precompute_matrix=precompute_mat,
         kmer_count=n_features,
         read_count=read_count,
         chunk_size=chunk_size
     )    
+    encoded_reads = get_metadata(kmer_searcher_output_path,input_path,n_features)
     
     if save_feature_matrix:
         feature_matrix_file = join(output_dir, "embedding_feature_matrix.npy")
@@ -366,41 +406,31 @@ def run_fedrann_pipeline(
     del embedding_matrix
     gc.collect()
 
-    # logger.info("--- 5. Align candidates ---")
+    logger.info("--- 5. Align candidates ---")
     
-    # overlap_candidates = get_overlap_candidates(neighbor_matrix,nndescent_n_neighbors)
-    # encoded_reads = []
-    # marker_weights = []
-    # alignment_dict = run_multiprocess_alignment(
-    #     overlap_candidates,
-    #     encoded_reads,
-    #     marker_weights,
-    #     aligner=cWeightedSemiglobalAligner,
-    #     align_kw=dict(max_cells=10**alignment_max_cells),
-    #     traceback=False,
-    #     processes=global_variables.threads,
-    #     batch_size=100,
-    #     max_total_wait_seconds=600,
-    # )
+    overlap_candidates = get_overlap_candidates(neighbor_matrix,nndescent_n_neighbors)
     
+    alignment_dict = run_multiprocess_alignment(
+        overlap_candidates,
+        encoded_reads,
+        marker_weights=None,
+        kmer_size=kmer_size,
+        aligner=cWeightedSemiglobalAligner,
+        processes=global_variables.threads,
+        batch_size=100,
+        max_total_wait_seconds=600,
+    )
     # Save output
     nbr_output_file = join(output_dir, "overlaps.tsv")
     logger.debug("Saving overlap table to %s", nbr_output_file)
-
-    read_names, read_lengths, strands = get_metadata(
-        ks_file=kmer_searcher_output_path,
-        fasta_file=input_path,
-        kmer_count=n_features
-    )
     
     df = get_output_dataframe(
-        neighbor_matrix=neighbor_matrix, 
-        read_names=read_names, 
-        read_lengths=read_lengths,
-        strands=strands
+        overlap_candidates=overlap_candidates, 
+        reads_info_dict=encoded_reads,
+        alignment_dict=alignment_dict
     )
     
-    df.to_csv(nbr_output_file, sep="\t", index=False)
+    df.to_csv(nbr_output_file, sep="\t", index=False, header=False)
 
     if not keep_intermediates:
         logger.debug("Removing intermediate files")

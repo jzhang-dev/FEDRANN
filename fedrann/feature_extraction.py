@@ -24,6 +24,7 @@ from .fastx_io import (
 )
 from . import global_variables
 from .custom_logging import logger
+from .align import Seq
 
 @njit
 def get_common_values(
@@ -126,56 +127,53 @@ def init_worker(shared_data_base, shared_indices_base, shared_indptr_base, matri
     global_kmer_count = kmer_count
     
 def process_read_chunk_optimized(task):
-    """
-    处理一个数据块，从全局变量中访问 precompute_matrix。
-    task: (数据块, start_index)
-    """
     chunk_data, start_index = task
     
     global global_precompute_matrix 
     global global_kmer_count
     
-    # ⚠️ 从全局变量中获取 precompute_matrix 和 kmer_count
     precompute_matrix = global_precompute_matrix
     kmer_count = global_kmer_count
-        
-    # 1. 收集数据，准备批量构建稀疏矩阵
+    num_reads_in_chunk = len(chunk_data)
+    M = precompute_matrix.shape[1]
+
+    # 1. 收集数据
     all_data = []
     all_cols = []
     all_rows = [] 
-    current_row_in_chunk = 0
     
-    for indices in chunk_data:
-        if len(indices) == 0:
-            continue
-            
-        all_data.extend(np.ones(len(indices), dtype=np.int8))
-        all_cols.extend(indices)
-        all_rows.extend([current_row_in_chunk] * len(indices))
-        
-        current_row_in_chunk += 1
-
+    for row_idx, indices in enumerate(chunk_data):
+        if len(indices) > 0:
+            all_data.extend(np.ones(len(indices), dtype=np.int8))
+            all_cols.extend(indices)
+            all_rows.extend([row_idx] * len(indices))
+    
+    # 2. 如果整个块都是空的，返回全零矩阵以保持索引对齐
     if not all_data:
-        # 返回空的 NumPy 数组和 start_index，注意形状要与 M 匹配
-        M = precompute_matrix.shape[1] 
-        return np.empty((0, M), dtype=precompute_matrix.dtype), start_index
+        return np.zeros((num_reads_in_chunk, M), dtype=precompute_matrix.dtype), start_index
 
-    # 2. 一次性构建稀疏矩阵 A_chunk
-    N_chunk = current_row_in_chunk
+    # 3. 构建稀疏矩阵，显式指定 shape 以包含空行
     A_chunk = csr_matrix((all_data, (all_rows, all_cols)), 
-                         shape=(N_chunk, kmer_count))
+                         shape=(num_reads_in_chunk, kmer_count))
     
-    # 3. 一次性进行点积运算
+    # 4. 点积运算
     R_chunk = A_chunk.dot(precompute_matrix) 
+    
     if start_index % 100000 == 0 and start_index != 0:
         logger.debug(f"{start_index} sequences have been processed.")
 
-    # 4. 返回密集数组和读长信息
+    # 5. 返回稠密矩阵（toarray 后形状为 (num_reads_in_chunk, M)）
     return R_chunk.toarray(), start_index
 
+def get_read_length(fasta_file):
+    read_length_dict = {}
+    for record in FastaLoader(fasta_file):
+        read_length_dict[record.name] = len(record.sequence)
+    return read_length_dict
 
 def get_feature_matrix(
     ks_file: str,
+    fasta_file: str,
     precompute_matrix,
     kmer_count: int,
     read_count: int,
@@ -254,15 +252,17 @@ def get_feature_matrix(
 
 
 def get_metadata(ks_file: str, fasta_file: str, kmer_count: int):
-    read_names = []
-    strands = []
-    read_lengths = []
     all_reads_iterator = parse_kmer_searcher_output(ks_file, kmer_count / 2)
     read_length = {}
+    encoded_reads = {}
     for record in FastaLoader(fasta_file):
         read_length[record.name] = len(record.sequence)
-    for item in all_reads_iterator:
-        read_names.append(item[0])
-        read_lengths.append(read_length[item[0]])
-        strands.append(item[2])
-    return read_names, read_lengths, strands
+    for i, item in enumerate(all_reads_iterator):
+        encoded_reads[i] = Seq(
+            elements=item[1],
+            length=read_length[item[0]],
+            read_id=i,
+            read_name=item[0],
+            strand=item[2]
+        )
+    return encoded_reads

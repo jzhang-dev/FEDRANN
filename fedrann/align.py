@@ -3,6 +3,7 @@
 
 import collections
 from math import ceil
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Sequence, Collection, Mapping, Any, Type, MutableMapping
@@ -14,8 +15,6 @@ from numpy.typing import NDArray
 from .custom_logging import logger
 
 import Aligner as cAligner  # type: ignore
-print(cAligner.__file__)
-
 
 def get_new_element():
     return 0
@@ -23,45 +22,38 @@ def get_new_element():
 
 @dataclass(init=False)
 class Seq:
-    elements: Sequence[int]
-    positions: Sequence[float] # 使用预估真实position
-    weights: Sequence[float]
+    elements: Sequence[int] # kmer indice
     length: int # 使用真实length
+    weights: Sequence[float] | None = None
     read_id: int | None = None
+    read_name: str
+    scale: float
+    strand: int = 0
 
-    def __init__(self, elements, positions=None, weights=None, length=None):
+    def __init__(self, elements, length, read_id, read_name, strand, weights=None):
         if len(elements) == 0:
             raise ValueError()
+        
         self.elements = elements
-
+        self.length = length
+        self.read_id = read_id
+        self.read_name = read_name
+        self.strand = strand
+        self.scale = self.length/len(self.elements)
+        
         if weights is None:
             # 自动计算 weights ； 仅供测试使用
             self.weights = np.ones(len(self.elements)).tolist()
         else:
             self.weights = weights
 
-        if length is None:
-            self.length = np.sum(self.weights)
-        else:
-            self.length = length
-
-        if positions is None:
-            # 自动计算 positions ； 根据sample比例估算
-            self.positions = np.cumsum([0] + list(self.weights))[:-1].tolist()
-        else:
-            self.positions = positions
-
-        if not len(self.elements) == len(self.positions) == len(self.weights):
-            raise ValueError()
 
     def __getitem__(self, indices: Sequence[int]) -> "Seq":
         sample_elements = [self.elements[i] for i in indices]
-        sample_positions = [self.positions[i] for i in indices]
         sample_weights = [self.weights[i] for i in indices]
         return type(self)(
             length=self.length,
             elements=sample_elements,
-            positions=sample_positions,
             weights=sample_weights,
         )
 
@@ -74,45 +66,56 @@ class Seq:
 
 @dataclass
 class AlignmentResult:
-    score: int
-    indices_1: Sequence[int]
-    indices_2: Sequence[int]
-    dp_matrix: np.ndarray | None = None
-    arrow_matrix: np.ndarray | None = None
-
+    start_1: int
+    end_1: int
+    start_2: int
+    end_2: int
+    identity: float
+    match_base_num: int
+    match_length: int
+    mapq: int
+    
     @classmethod
     def from_empty(cls):
         return cls(0, [], [], None, None)
 
     def __iter__(self):
-        yield self.score
-        yield self.indices_1
-        yield self.indices_2
-        yield self.dp_matrix
-        yield self.arrow_matrix
-
-    @property
-    def has_traceback(self) -> bool:
-        if self.score <= 0:  # No traceback needed
-            return True
-        if len(self.indices_1) > 0 and len(self.indices_2) > 0:
-            return True
-        return False
+        yield self.start_1
+        yield self.end_1
+        yield self.start_2
+        yield self.end_1
+        yield self.identity
+        yield self.match_base_num
+        yield self.match_length
+        yield self.mapq
+        
+    # @property
+    # def has_traceback(self) -> bool:
+    #     if self.score <= 0:  # No traceback needed
+    #         return True
+    #     if len(self.indices_1) > 0 and len(self.indices_2) > 0:
+    #         return True
+    #     return False
 
     def flip(self) -> "AlignmentResult":
         flipped_result = AlignmentResult(
-            score=self.score,
-            indices_1=self.indices_2,
-            indices_2=self.indices_1,
-            dp_matrix=self.dp_matrix.T if self.dp_matrix is not None else None,
-            arrow_matrix=self.arrow_matrix.T if self.arrow_matrix is not None else None,
+            start_1=self.start_2,
+            end_1=self.end_2,
+            start_2=self.start_1,
+            end_2=self.end_1,
+            identity=self.identity,
+            match_base_num=self.match_base_num,
+            match_length=self.match_length,
+            mapq=self.mapq
         )
         return flipped_result
 
 @dataclass
 class _PairwiseAligner:
+    
     seq1: Seq
     seq2: Seq
+    kmer_size: int
 
     @staticmethod
     def _get_cell_score(dp_matrix, i, j, x1, x2, w1, w2):
@@ -171,7 +174,7 @@ class cWeightedSemiglobalAligner(_PairwiseAligner):
     C++ implementation of `WeightedSemiglobalAligner`
     """
 
-    def align(self, traceback=True, max_cells=int(1e9)) -> AlignmentResult:
+    def align(self, traceback=True,  max_cells=int(1e9)) -> AlignmentResult:
         c_aligner = cAligner.AlignerWrapper()
         seq1, seq2 = self.seq1, self.seq2
         if len(seq1) * len(seq2) > max_cells:
@@ -180,13 +183,16 @@ class cWeightedSemiglobalAligner(_PairwiseAligner):
         weights_2 = seq2.weights
         s1, s2 = seq1.elements, seq2.elements
         try:
-            alignment_score, aln1, aln2 = c_aligner.align_I(
+            score, offset, aln1, aln2 = c_aligner.align_I(
                 s1, s2, weights_1, weights_2, traceback
             )
+            align_result = get_rough_stats_by_position(
+                seq1, seq2, aln1, aln2, self.kmer_size
+                )
+        
         except Exception:
             raise RuntimeError(f"Alignment failed. {seq1.read_id=} {seq2.read_id=}")
-        dp_matrix, arrow_matrix = None, None
-        return AlignmentResult(alignment_score, aln1, aln2, dp_matrix, arrow_matrix)
+        return align_result
     
     
 def wait_for_memory(
@@ -226,50 +232,19 @@ def wait_for_memory(
         time.sleep(np.random.random() * 2 * mean_step_wait_seconds)
 
 
-def get_sibling_id(x: int) -> int:
-    return -x
-
-@dataclass(eq=False)
-class EncodedRead:
-    markers: NDArray[np.int64]
-    start_positions: NDArray[np.int64]
-    end_positions: NDArray[np.int64]
-    length: int
-
-    def __post_init__(self):
-        if len(self.markers) == 0:
-            raise ValueError()
-        if not (
-            len(self.markers) == len(self.start_positions) == len(self.end_positions)
-        ):
-            raise ValueError()
-
-    def reverse_complement(self) -> "EncodedRead":
-        new_markers = np.array([get_sibling_id(x) for x in self.markers][::-1])
-        read_length = self.length
-        new_end_positions = read_length - self.start_positions[::-1]
-        new_start_positions = read_length - self.end_positions[::-1]
-        return type(self)(
-            new_markers, new_start_positions, new_end_positions, length=self.length
-        )
-
-
 def run_multiprocess_alignment(
     candidates: Sequence[tuple[int, int]],
-    encoded_reads: Mapping[int, EncodedRead],
-    marker_weights: Mapping[int, int],
+    encoded_reads: Mapping[int, Seq],
+    marker_weights: Mapping[int, int]| None = None,
     *,
+    kmer_size: int,
     aligner: Type[_PairwiseAligner],
-    align_kw: Mapping = {},
-    traceback=False,
     processes=4,
     batch_size=100,
     max_total_wait_seconds=120,
     mean_step_wait_seconds=None,
     shuffle=True,
     seed=1,
-    _cache: MutableMapping[tuple[int, int], AlignmentResult] | None = None,
-    _update_cache: bool = True,
 ) -> MutableMapping[tuple[int, int], AlignmentResult]:
     if mean_step_wait_seconds is None:
         mean_step_wait_seconds = processes
@@ -277,80 +252,54 @@ def run_multiprocess_alignment(
     # Remove duplicated candidates
     candidates = list(set(tuple(sorted(x)) for x in candidates))  # type: ignore
 
-    # Remove cached candidates
-    if _cache is not None:
-        cached_candidates = set(_cache) & set(candidates)
-        if traceback:
-            invalid_cache = set()
-            for x in cached_candidates:
-                cached_result = _cache[x]
-                if cached_result.score > 0 and not cached_result.has_traceback:
-                    invalid_cache.add(x)
-            cached_candidates -= invalid_cache
-        candidates = list(set(candidates) - cached_candidates)
-
     if shuffle:
         candidates = list(candidates).copy()
         np.random.default_rng(seed).shuffle(candidates)
 
     candidate_count = len(candidates)
-    alignment_scores = sharedmem.empty(candidate_count, dtype="int64")
 
     with sharedmem.MapReduce(np=processes) as pool:
 
         def align(i):
 
             k1, k2 = candidates[i]
-            s1 = encoded_reads[k1].markers
-            s2 = encoded_reads[k2].markers
-            seq1 = Seq(s1, weights=[marker_weights[x] for x in s1])
-            seq2 = Seq(s2, weights=[marker_weights[x] for x in s2])
-            seq1.read_id = k1  # DEBUG
-            seq2.read_id = k2
+            seq1 = encoded_reads[k1]
+            seq2 = encoded_reads[k2]
+            if seq1.read_id != k1 or seq2.read_id != k2:
+                raise ValueError("Read index doesn't match!")
 
-            min_free_memory_gb = 0.5 * len(s1) * len(s2) / 1e9 + 1
+            min_free_memory_gb = 0.5 * len(seq1) * len(seq2) / 1e9 + 1
             wait_for_memory(
                 min_free_memory_gb=min_free_memory_gb,
                 max_total_wait_seconds=max_total_wait_seconds,
                 mean_step_wait_seconds=mean_step_wait_seconds,
             )
-            result = aligner(seq1, seq2).align(**align_kw, traceback=traceback)  # type: ignore
+            result = aligner(seq1, seq2, kmer_size=kmer_size).align()  # type: ignore
             return result
 
         def work(i0):
-            output_size = len(alignment_scores)
-            aligned_indices = []
+            output_size = candidate_count
             for i in range(i0, i0 + batch_size):
                 if i >= output_size:
                     break
-
-                alignment_scores[i] = -1  # DEBUG
                 result = align(i)
-                alignment_scores[i] = result.score
-                if traceback:
-                    aligned_indices.append((result.indices_1, result.indices_2))
-            return i0, aligned_indices
+            return i0, result
 
         finished = 0
         alignment_dict = {}
         previous_progress = 0
         start_time = time.time()
 
-        def reduce(i0, batch_aligned_indices):
+        def reduce(i0, result):
             nonlocal alignment_dict
             
             for i in range(i0, i0 + batch_size):
                 if i >= candidate_count:
                     break
-                if traceback:
-                    indices_1, indices_2 = batch_aligned_indices[i - i0]
-                else:
-                    indices_1, indices_2 = [], []
-                score = int(alignment_scores[i])
                 k1, k2 = candidates[i]
-                alignment_dict[(k1, k2)] = AlignmentResult(
-                    score, indices_1=indices_1, indices_2=indices_2
-                )
+                if result != -1:
+                    alignment_dict[(k1, k2)] = result
+
 
             nonlocal finished
             nonlocal previous_progress
@@ -363,28 +312,18 @@ def run_multiprocess_alignment(
                 speed = finished / delta_time
                 logger.debug(f"{progress:.1%}\t{speed:.1f} alignments per second")
                 previous_progress = progress
-        try:
-            pool.map(work, range(0, candidate_count, batch_size), reduce=reduce)
-        except Exception:
-            unfinished = (alignment_scores == -1).nonzero()[0].tolist()
-            raise RuntimeError(f"Alignment failed. Unfinished: {unfinished}")
 
-    # Load cached results
-    if _cache is not None:
-        alignment_dict.update({x: _cache[x] for x in cached_candidates})
-    score_list = [x.score for x in alignment_dict.values()]
-    logger.debug("Total alignment score: {}".format(np.sum(score_list)))
-    logger.debug("Mean alignment score: {}".format(np.mean(score_list)))
+        pool.map(work, range(0, candidate_count, batch_size), reduce=reduce)
+        
+    identity_list = [x.identity for x in alignment_dict.values()]
+    logger.debug("Total alignment score: {}".format(np.sum(identity_list)))
+    logger.debug("Mean alignment score: {}".format(np.mean(identity_list)))
 
     # Add flipped results
     flipped_results = {}
     for (i1, i2), result in alignment_dict.items():
         flipped_results[(i2, i1)] = result.flip()
     alignment_dict |= flipped_results
-
-    # Update cache
-    if _update_cache and candidate_count > 0 and _cache is not None:
-        _cache.update(alignment_dict)
 
     return alignment_dict
 
@@ -402,3 +341,48 @@ def get_overlap_candidates(
         overlap_candidates += [(i1, i2) for i2 in row[:n_neighbors]]
 
     return overlap_candidates
+
+def get_rough_stats_by_position(seq1: Seq, seq2: Seq, aln1: list[int], aln2: list[int], k: int):
+    """
+    针对只包含 K-mer 索引且按顺序排列的对齐结果
+    aln1, aln2: 软件返回的列表，数字是 K-mer ID，-1 是空位
+    """
+    filtered_pairs = [(i, j) for i, j in zip(aln1, aln2) if i != -1 and j != -1]
+
+    # 2. 判断是否为空
+    if filtered_pairs:
+        path1_pos, path2_pos = map(list, zip(*filtered_pairs))
+    else:
+        return -1
+    
+
+    # 3. 映射原始坐标
+    # 使用下标 path1_pos[0] 而不是 aln1[path1_pos[0]]
+    r1_start = int(path1_pos[0] * seq1.scale)
+    r1_end   = min(seq1.length, int(path1_pos[-1] * seq1.scale) + k)
+    
+    r2_start = int(path2_pos[0] * seq2.scale)
+    r2_end   = min(seq2.length, int(path2_pos[-1] * seq2.scale) + k)
+    
+    assert r1_end <= seq1.length
+    assert r2_end <= seq2.length
+    # 4. 计算 Identity
+    # path1_pos 存储索引，而不是kmer index
+    match_marker1 = [val for i, val in enumerate(seq1.elements) if i in path1_pos]
+    match_marker2 = [val for i, val in enumerate(seq2.elements) if i in path2_pos]
+    
+    matches = sum(1 for i in range(len(match_marker1)) if match_marker1[i] == match_marker2[i])
+    match_base_num = int(matches * seq1.scale)
+    
+    aligned_segments = len(path1_pos)
+    match_length = int(aligned_segments * seq1.scale)
+      
+    kmer_identity = (matches / aligned_segments * 100) if aligned_segments > 0 else 0
+    base_identity = math.pow(kmer_identity, 1/k)
+    
+    kmer_id_freq = matches / aligned_segments
+    mapq = int(min(60, 60 * kmer_id_freq * (1 - 1/math.exp(matches/5))))
+    
+    align_result = AlignmentResult(r1_start, r1_end, r2_start, r2_end, base_identity, match_base_num, match_length, mapq)
+    
+    return align_result
