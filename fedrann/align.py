@@ -11,6 +11,8 @@ import psutil
 import numpy as np
 import sharedmem
 from numpy.typing import NDArray
+from scipy import sparse
+from scipy.sparse._csr import csr_matrix
 
 from .custom_logging import logger
 
@@ -97,18 +99,6 @@ class AlignmentResult:
     #         return True
     #     return False
 
-    def flip(self) -> "AlignmentResult":
-        flipped_result = AlignmentResult(
-            start_1=self.start_2,
-            end_1=self.end_2,
-            start_2=self.start_1,
-            end_2=self.end_1,
-            identity=self.identity,
-            match_base_num=self.match_base_num,
-            match_length=self.match_length,
-            mapq=self.mapq
-        )
-        return flipped_result
 
 @dataclass
 class _PairwiseAligner:
@@ -279,26 +269,30 @@ def run_multiprocess_alignment(
 
         def work(i0):
             output_size = candidate_count
+            results = []
             for i in range(i0, i0 + batch_size):
                 if i >= output_size:
                     break
                 result = align(i)
-            return i0, result
+                results.append(result)
+            return i0, results
 
         finished = 0
         alignment_dict = {}
         previous_progress = 0
         start_time = time.time()
 
-        def reduce(i0, result):
+        def reduce(i0, results):
             nonlocal alignment_dict
             
-            for i in range(i0, i0 + batch_size):
+            for idx, i in enumerate(range(i0, i0 + batch_size)):
                 if i >= candidate_count:
                     break
                 k1, k2 = candidates[i]
+                result = results[idx] # 从列表中取出对应位置的结果
                 if result != -1:
-                    alignment_dict[(k1, k2)] = result
+                    alignment_dict[(k1, k2)] = result[0]
+                    alignment_dict[(k2, k1)] = result[1]
 
 
             nonlocal finished
@@ -319,11 +313,6 @@ def run_multiprocess_alignment(
     logger.debug("Total alignment score: {}".format(np.sum(identity_list)))
     logger.debug("Mean alignment score: {}".format(np.mean(identity_list)))
 
-    # Add flipped results
-    flipped_results = {}
-    for (i1, i2), result in alignment_dict.items():
-        flipped_results[(i2, i1)] = result.flip()
-    alignment_dict |= flipped_results
 
     return alignment_dict
 
@@ -342,47 +331,90 @@ def get_overlap_candidates(
 
     return overlap_candidates
 
-def get_rough_stats_by_position(seq1: Seq, seq2: Seq, aln1: list[int], aln2: list[int], k: int):
-    """
-    针对只包含 K-mer 索引且按顺序排列的对齐结果
-    aln1, aln2: 软件返回的列表，数字是 K-mer ID，-1 是空位
-    """
+import math
+import numpy as np
+
+def calculate_identity(jaccard, k):
+    if jaccard <= 0:
+        return 0.0
+    # 防止 log 溢出，并处理三代 read 的 Jaccard 修正
+    # 公式: I = (2j / (1+j))^(1/k)
+    try:
+        val = (2 * jaccard) / (jaccard + 1)
+        # 对数域计算更稳定
+        log_identity = (1 / k) * math.log(val)
+        return math.exp(log_identity)
+    except (ValueError, ZeroDivisionError):
+        return 0.0
+
+def get_rough_stats_by_position(seq1, seq2, aln1, aln2, k):
+    # 1. 提取有效比对对
     filtered_pairs = [(i, j) for i, j in zip(aln1, aln2) if i != -1 and j != -1]
 
-    # 2. 判断是否为空
-    if filtered_pairs:
-        path1_pos, path2_pos = map(list, zip(*filtered_pairs))
-    else:
-        return -1
-    
+    if not filtered_pairs:
+        return -1 
 
-    # 3. 映射原始坐标
-    # 使用下标 path1_pos[0] 而不是 aln1[path1_pos[0]]
-    r1_start = int(path1_pos[0] * seq1.scale)
-    r1_end   = min(seq1.length, int(path1_pos[-1] * seq1.scale) + k)
+    # 提取坐标索引
+    # 注意：这里假设 index * scale 是碱基起始位置
+    idx1, idx2 = zip(*filtered_pairs)
     
-    r2_start = int(path2_pos[0] * seq2.scale)
-    r2_end   = min(seq2.length, int(path2_pos[-1] * seq2.scale) + k)
+    # 2. 映射原始坐标 (碱基尺度)
+    r1_start = int(idx1[0] * seq1.scale)
+    r1_end   = min(seq1.length, int(idx1[-1] * seq1.scale) + k)
     
-    assert r1_end <= seq1.length
-    assert r2_end <= seq2.length
-    # 4. 计算 Identity
-    # path1_pos 存储索引，而不是kmer index
-    match_marker1 = [val for i, val in enumerate(seq1.elements) if i in path1_pos]
-    match_marker2 = [val for i, val in enumerate(seq2.elements) if i in path2_pos]
+    r2_start = int(idx2[0] * seq2.scale)
+    r2_end   = min(seq2.length, int(idx2[-1] * seq2.scale) + k)
     
-    matches = sum(1 for i in range(len(match_marker1)) if match_marker1[i] == match_marker2[i])
-    match_base_num = int(matches * seq1.scale)
+    # 3. 计算比对跨度 (Alignment Span / Length)
+    # 取 query 侧跨度作为基准长度
+    match_length = r1_end - r1_start
+    if match_length <= 0: return None
+
+    # 4. 计算 Jaccard 和 Identity
+    # 注意：match_marker 应该是特征向量（如 count vector）
+    # 这里假设 match_marker1/2 是通过采样得到的 k-mer 集合的特征表示
+    match_marker1 = [seq1.elements[i] for i in idx1]
+    match_marker2 = [seq2.elements[j] for j in idx2]
     
-    aligned_segments = len(path1_pos)
-    match_length = int(aligned_segments * seq1.scale)
-      
-    kmer_identity = (matches / aligned_segments * 100) if aligned_segments > 0 else 0
-    base_identity = math.pow(kmer_identity, 1/k)
+    j = len(set(match_marker1)&set(match_marker2))/len(set(match_marker1)|set(match_marker2))
     
-    kmer_id_freq = matches / aligned_segments
-    mapq = int(min(60, 60 * kmer_id_freq * (1 - 1/math.exp(matches/5))))
-    
-    align_result = AlignmentResult(r1_start, r1_end, r2_start, r2_end, base_identity, match_base_num, match_length, mapq)
-    
-    return align_result
+    base_identity = calculate_identity(j, k)
+
+    # 5. 计算修正后的匹配碱基数
+    # 核心逻辑：匹配碱基数 = 总长度 * 碱基一致性
+    match_base_num = int(match_length * base_identity)
+
+    # 6. 估算 MAPQ
+    # 这是一个经验公式，模拟 Minimap2 的逻辑：
+    # MAPQ 受 match 数量和 Identity 共同影响。
+    # 这里简单用 identity 和匹配的采样点比例来估算
+    if base_identity > 0:
+        # 匹配点越多，Identity 越高，得分越高。最高 60。
+        raw_mapq = -10 * math.log10(1 - base_identity + 1e-6) * (len(filtered_pairs) / 10)
+        mapq = min(60, max(0, int(raw_mapq)))
+    else:
+        mapq = 0
+
+    align_result = AlignmentResult(
+        start_1=r1_start, 
+        end_1=r1_end, 
+        start_2=r2_start, 
+        end_2=r2_end, 
+        identity=base_identity, 
+        match_base_num=match_base_num, 
+        match_length=match_length, 
+        mapq=mapq
+    )
+
+    flip_align_result = AlignmentResult(
+        start_1=r2_start, 
+        end_1=r2_end, 
+        start_2=r1_start, 
+        end_2=r1_end, 
+        identity=base_identity, 
+        match_base_num=int((r2_end-r2_start) * base_identity), 
+        match_length=r2_end-r2_start, 
+        mapq=mapq
+    )
+    return align_result, flip_align_result
+

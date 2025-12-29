@@ -290,7 +290,7 @@ def get_output_dataframe(
     aligned_candidates_num = len(aligned_candidates)
     all_candidates_num = len(overlap_candidates)
     
-    for (query_index,target_index) in overlap_candidates:
+    for (query_index, target_index) in overlap_candidates:
         if (query_index, target_index) not in aligned_candidates:
             continue
         
@@ -307,8 +307,9 @@ def get_output_dataframe(
         assert target_seq.read_id == target_index
         
         align_result = alignment_dict[(query_index,target_index)] 
-        assert align_result.end_1 <= query_seq.length
-        assert align_result.end_2 <= target_seq.length
+        
+        if query_seq.read_id == 0:
+            print(f"{query_seq.read_name=},{query_seq.length=},{align_result.start_1=},{align_result.end_1=}")
         query_names.append(query_name)
         query_lengths.append(query_length)
         query_starts.append(align_result.start_1)
