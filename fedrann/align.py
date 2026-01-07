@@ -14,8 +14,9 @@ from numpy.typing import NDArray
 from scipy import sparse
 from scipy.sparse._csr import csr_matrix
 import pandas as pd
-
+import tempfile, glob, os
 from .custom_logging import logger
+from . import global_variables
 
 import Aligner as cAligner  # type: ignore
 
@@ -25,7 +26,7 @@ def get_new_element():
 
 @dataclass(init=False)
 class Seq:
-    elements: Sequence[int] # kmer indice
+    elements: NDArray # kmer indice
     length: int # 使用真实length
     weights: Sequence[float] | None = None
     read_id: int | None = None
@@ -223,19 +224,110 @@ def wait_for_memory(
         time.sleep(np.random.random() * 2 * mean_step_wait_seconds)
 
 
+
+def run_multiprocess_alignment_optimized(
+    candidates: Sequence[tuple[int, int]],
+    encoded_reads: Mapping[int, Seq],
+    marker_weights: Mapping[int, int] | None = None,
+    *,
+    kmer_size: int,
+    aligner: Type[_PairwiseAligner],
+    processes=4,
+    batch_size=500,
+    output_path: str,
+    **kwargs
+):
+    # 1. 预处理 Candidates
+    candidates = np.array(list(set(tuple(sorted(x)) for x in candidates)))
+    if kwargs.get('shuffle', True):
+        np.random.default_rng(kwargs.get('seed', 1)).shuffle(candidates)
+    
+    candidate_count = len(candidates) 
+    columns = [
+        "query_name", "query_length", "query_start", "query_end", 
+        "relative_strand", "target_name", "target_length", 
+        "target_start", "target_end", "match_base", "match_length", "quality"
+    ]
+
+    # 创建临时文件夹用于存放分片
+    tmp_dir = global_variables.temp_dir
+    logger.info(f"Temporary shards will be stored in: {tmp_dir}")
+
+    with sharedmem.MapReduce(np=processes) as pool:
+        
+        def work(i0):
+            # 获取当前 worker 的 ID (用于命名独立文件)
+            # sharedmem 内部可以通过这种方式获取进程内标识
+            pid = os.getpid()
+            shard_path = os.path.join(tmp_dir, f"shard_{pid}.tmp")
+            
+            local_results = []
+            i1 = min(i0 + batch_size, candidate_count)
+            
+            for i in range(i0, i1):
+                k1, k2 = candidates[i]
+                seq1, seq2 = encoded_reads[k1], encoded_reads[k2]
+                
+                # 执行比对
+                res = aligner(seq1, seq2, kmer_size=kmer_size).align()
+                
+                if res is not None and res != -1:
+                    # res 结构为 (align_result, flip_align_result)
+                    r = res[0] 
+                    strand = '+' if seq1.strand == seq2.strand else '-'
+                    local_results.append((
+                        seq1.read_name, seq1.length, r.start_1, r.end_1,
+                        strand,
+                        seq2.read_name, seq2.length, r.start_2, r.end_2,
+                        r.match_base_num, r.match_length, r.mapq
+                    ))
+            
+            # 将当前 batch 结果追加到该 worker 专属的临时文件
+            if local_results:
+                df = pd.DataFrame(local_results)
+                # 不写 header 和 index，采用 tab 分割提高速度
+                df.to_csv(shard_path, mode='a', header=False, index=False, sep='\t')
+            return len(local_results)
+
+        # sharedmem 的 map 不需要额外的 reduce 进行写操作，因为 work 已经写了
+        pool.map(work, range(0, candidate_count, batch_size))
+
+    # 2. 合并文件 (Final Step)
+    logger.info("Merging shards...")
+    try:
+        with open(output_path, 'w') as f_out:
+            # 写入表头
+            f_out.write('\t'.join(columns) + '\n')
+            
+            # 遍历所有分片
+            for shard in glob.glob(os.path.join(tmp_dir, "*.tmp")):
+                with open(shard, 'r') as f_in:
+                    # 物理拷贝，这是最快的合并方式
+                    for line in f_in:
+                        f_out.write(line)
+                os.remove(shard) # 合并后删除临时文件
+        os.rmdir(tmp_dir)
+    except Exception as e:
+        logger.error(f"Error during merging: {e}")
+
+    logger.info(f"Alignment completed. Final results saved to {output_path}")
+
 # def run_multiprocess_alignment(
 #     candidates: Sequence[tuple[int, int]],
-#     encoded_reads: Mapping[int, Seq],
-#     marker_weights: Mapping[int, int]| None = None,
+#     encoded_reads: Mapping[int, EncodedRead],
+#     marker_weights: Mapping[int, int],
 #     *,
-#     kmer_size: int,
 #     aligner: Type[_PairwiseAligner],
+#     align_kw: Mapping = {},
+#     traceback=False,
 #     processes=4,
 #     batch_size=100,
 #     max_total_wait_seconds=120,
 #     mean_step_wait_seconds=None,
 #     shuffle=True,
 #     seed=1,
+#     _cache: MutableMapping[tuple[int, int], AlignmentResult] | None = None,
+#     _update_cache: bool = True,
 # ) -> MutableMapping[tuple[int, int], AlignmentResult]:
 #     if mean_step_wait_seconds is None:
 #         mean_step_wait_seconds = processes
@@ -243,21 +335,31 @@ def wait_for_memory(
 #     # Remove duplicated candidates
 #     candidates = list(set(tuple(sorted(x)) for x in candidates))  # type: ignore
 
+#     # Remove cached candidates
+#     if _cache is not None:
+#         cached_candidates = set(_cache) & set(candidates)
+#         if traceback:
+#             invalid_cache = set()
+#             for x in cached_candidates:
+#                 cached_result = _cache[x]
+#                 if cached_result.score > 0 and not cached_result.has_traceback:
+#                     invalid_cache.add(x)
+#             cached_candidates -= invalid_cache
+#         candidates = list(set(candidates) - cached_candidates)
+
 #     if shuffle:
 #         candidates = list(candidates).copy()
 #         np.random.default_rng(seed).shuffle(candidates)
 
 #     candidate_count = len(candidates)
+#     alignment_scores = sharedmem.empty(candidate_count, dtype="int64")
 
 #     with sharedmem.MapReduce(np=processes) as pool:
 
 #         def align(i):
 
 #             k1, k2 = candidates[i]
-#             seq1 = encoded_reads[k1]
-#             seq2 = encoded_reads[k2]
-#             if seq1.read_id != k1 or seq2.read_id != k2:
-#                 raise ValueError("Read index doesn't match!")
+#             seq1, seq2 = encoded_reads[k1], encoded_reads[k2]
 
 #             min_free_memory_gb = 0.5 * len(seq1) * len(seq2) / 1e9 + 1
 #             wait_for_memory(
@@ -269,32 +371,33 @@ def wait_for_memory(
 #             return result
 
 #         def work(i0):
-#             output_size = candidate_count
-#             results = []
+#             output_size = len(alignment_scores)
 #             for i in range(i0, i0 + batch_size):
 #                 if i >= output_size:
 #                     break
+
+#                 alignment_scores[i] = -1  # DEBUG
 #                 result = align(i)
-#                 results.append(result)
-#             return i0, results
+#                 alignment_scores[i] = result.score
+
+#             return i0
 
 #         finished = 0
 #         alignment_dict = {}
 #         previous_progress = 0
 #         start_time = time.time()
 
-#         def reduce(i0, results):
+#         def reduce(i0, batch_aligned_indices):
 #             nonlocal alignment_dict
             
-#             for idx, i in enumerate(range(i0, i0 + batch_size)):
+#             for i in range(i0, i0 + batch_size):
 #                 if i >= candidate_count:
 #                     break
+#                 score = int(alignment_scores[i])
 #                 k1, k2 = candidates[i]
-#                 result = results[idx] # 从列表中取出对应位置的结果
-#                 if result != -1:
-#                     alignment_dict[(k1, k2)] = result[0]
-#                     alignment_dict[(k2, k1)] = result[1]
-
+#                 alignment_dict[(k1, k2)] = AlignmentResult(
+#                     score, indices_1=indices_1, indices_2=indices_2
+#                 )
 
 #             nonlocal finished
 #             nonlocal previous_progress
@@ -307,97 +410,30 @@ def wait_for_memory(
 #                 speed = finished / delta_time
 #                 logger.debug(f"{progress:.1%}\t{speed:.1f} alignments per second")
 #                 previous_progress = progress
+#         try:
+#             pool.map(work, range(0, candidate_count, batch_size), reduce=reduce)
+#         except Exception:
+#             unfinished = (alignment_scores == -1).nonzero()[0].tolist()
+#             raise RuntimeError(f"Alignment failed. Unfinished: {unfinished}")
 
-#         pool.map(work, range(0, candidate_count, batch_size), reduce=reduce)
-        
-#     identity_list = [x.identity for x in alignment_dict.values()]
-#     logger.debug("Total alignment score: {}".format(np.sum(identity_list)))
-#     logger.debug("Mean alignment score: {}".format(np.mean(identity_list)))
+#     # Load cached results
+#     if _cache is not None:
+#         alignment_dict.update({x: _cache[x] for x in cached_candidates})
+#     score_list = [x.score for x in alignment_dict.values()]
+#     logger.debug("Total alignment score: {}".format(np.sum(score_list)))
+#     logger.debug("Mean alignment score: {}".format(np.mean(score_list)))
 
+#     # Add flipped results
+#     flipped_results = {}
+#     for (i1, i2), result in alignment_dict.items():
+#         flipped_results[(i2, i1)] = result.flip()
+#     alignment_dict |= flipped_results
+
+#     # Update cache
+#     if _update_cache and candidate_count > 0 and _cache is not None:
+#         _cache.update(alignment_dict)
 
 #     return alignment_dict
-
-
-
-def run_multiprocess_alignment_optimized(
-    candidates: Sequence[tuple[int, int]],
-    encoded_reads: Mapping[int, Seq],
-    marker_weights: Mapping[int, int] | None = None,
-    *,
-    kmer_size: int,
-    aligner: Type[_PairwiseAligner],
-    processes=4,
-    batch_size=200, # 适当增大 batch_size 提高并行效率
-    output_path: str = "alignments.paf", # 建议直接支持路径
-    **kwargs
-):
-    # 1. 预处理 Candidates (原位操作减少内存)
-    candidates = list(set(tuple(sorted(x)) for x in candidates))
-    if kwargs.get('shuffle', True):
-        np.random.default_rng(kwargs.get('seed', 1)).shuffle(candidates)
-    
-    candidate_count = len(candidates)
-    
-    # 定义输出列名 (类似 PAF 格式)
-    columns = [
-        "query_name", "query_length", "query_start", "query_end", 
-        "relative_strand", "target_name", "target_length", 
-        "target_start", "target_end", "match_base", "match_length", "quality"
-    ]
-
-    with sharedmem.MapReduce(np=processes) as pool:
-        
-        def work(i0):
-            # i0 是当前 batch 的起始索引
-            results = []
-            end_idx = min(i0 + batch_size, candidate_count)
-            
-            for i in range(i0, end_idx):
-                k1, k2 = candidates[i]
-                seq1, seq2 = encoded_reads[k1], encoded_reads[k2]
-                
-                # 内存检查（保留原逻辑）
-                min_free_memory_gb = 0.5 * len(seq1) * len(seq2) / 1e9 + 1
-                wait_for_memory(min_free_memory_gb=min_free_memory_gb)
-                
-                # 执行比对
-                res = aligner(seq1, seq2, kmer_size=kmer_size).align()
-                
-                # 直接在这里提取 DataFrame 需要的字段，避免存储整个对象
-                # res[0] 是 (k1, k2) 的结果
-                if res != -1:
-                    for r in res:
-                        strand = '+' if seq1.strand == seq2.strand else '-'
-                        # 构造轻量级的 tuple 或 list
-                        results.append((
-                            seq1.read_name, seq1.length, r.start_1, r.end_1,
-                            strand,
-                            seq2.read_name, seq2.length, r.start_2, r.end_2,
-                            r.match_base_num, r.match_length, r.mapq
-                        ))
-            return results
-
-        # 使用文件追加模式，避免内存堆积
-        first_chunk = True
-        
-        def reduce(results):
-            nonlocal first_chunk
-            if not results: return
-            
-            # 将当前 batch 转换为 DataFrame
-            df_chunk = pd.DataFrame(results, columns=columns)
-            
-            # 写入磁盘 (推荐使用 feather 或 parquet，也可以是 csv/paf)
-            # 如果内存允许，也可以先收集成列表最后一次性 concat
-            mode = 'w' if first_chunk else 'a'
-            header = first_chunk
-            df_chunk.to_csv(output_path, mode=mode, header=header, index=False, sep='\t')
-            
-            first_chunk = False
-
-        pool.map(work, range(0, candidate_count, batch_size), reduce=reduce)
-
-    logger.info(f"Alignment completed. Results saved to {output_path}")
 
 
 def get_overlap_candidates(

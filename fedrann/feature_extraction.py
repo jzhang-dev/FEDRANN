@@ -259,7 +259,7 @@ def get_metadata(ks_file: str, fasta_file: str, kmer_count: int):
         read_length[record.name] = len(record.sequence)
     for i, item in enumerate(all_reads_iterator):
         encoded_reads[i] = Seq(
-            elements=item[1],
+            elements=np.array(item[1]),
             length=read_length[item[0]],
             read_id=i,
             read_name=item[0],

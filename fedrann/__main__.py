@@ -26,7 +26,7 @@ from memory_profiler import memory_usage
 from numpy.typing import NDArray
 import logging
 from itertools import islice
-
+import pickle
 from . import __version__, __description__
 
 from .feature_extraction import (
@@ -267,83 +267,6 @@ def get_metadata_table(
     metadata_df = pd.DataFrame(metadata)
     return metadata_df
 
-# def get_output_dataframe(
-#     overlap_candidates: list[Tuple],
-#     reads_info_dict: Mapping[int, Seq],      
-#     alignment_dict: Mapping[Tuple, AlignmentResult]
-# ) -> pd.DataFrame:
-#     query_names = []
-#     target_names = []
-#     query_lengths = []
-#     target_lengths = []
-#     query_starts = []
-#     query_ends = []
-#     target_starts = []
-#     target_ends = []
-#     identities = []
-#     align_orientations = []
-#     match_bases = []
-#     match_lengths = []
-#     qualities = []
-    
-#     aligned_candidates = set(alignment_dict.keys())
-#     aligned_candidates_num = len(aligned_candidates)
-#     all_candidates_num = len(overlap_candidates)
-    
-#     for (query_index, target_index) in overlap_candidates:
-#         if (query_index, target_index) not in aligned_candidates:
-#             continue
-        
-#         query_seq = reads_info_dict[query_index]
-#         assert query_seq.read_id == query_index
-#         query_name = query_seq.read_name
-#         query_length = query_seq.length
-#         query_orientation = query_seq.strand
-                
-#         target_seq = reads_info_dict[target_index]
-#         target_name = target_seq.read_name
-#         target_length = target_seq.length
-#         target_orientation = target_seq.strand
-#         assert target_seq.read_id == target_index
-        
-#         align_result = alignment_dict[(query_index,target_index)] 
-        
-#         query_names.append(query_name)
-#         query_lengths.append(query_length)
-#         query_starts.append(align_result.start_1)
-#         query_ends.append(align_result.end_1)
-        
-#         target_names.append(target_name)
-#         target_lengths.append(target_length)
-#         target_starts.append(align_result.start_2)
-#         target_ends.append(align_result.end_2)
-        
-#         identities.append(align_result.identity)
-#         match_bases.append(align_result.match_base_num)
-#         match_lengths.append(align_result.match_length)
-        
-#         align_orientations.append('+' if query_orientation == target_orientation else '-')
-#         qualities.append(align_result.mapq)
-
-#     columns = {
-#         "query_name": query_names,
-#         "query_length": query_lengths,
-#         "query_start": query_starts,
-#         "query_end": query_ends,
-#         "relative_strand": align_orientations,
-#         "target_name": target_names,
-#         "target_length": target_lengths,
-#         "target_start": target_starts,
-#         "target_end": target_ends,
-#         "match_base": match_bases,
-#         "match_length": match_lengths,
-#         "quality": qualities
-#     }
-#     df = pd.DataFrame(columns)
-#     logger.debug(f"{all_candidates_num=},{aligned_candidates_num=},{aligned_candidates_num/all_candidates_num=}")
-#     logger.debug(f"Output DataFrame shape: {df.shape}")
-#     return df
-
 def run_fedrann_pipeline(
     *,
     input_path: str,
@@ -408,6 +331,13 @@ def run_fedrann_pipeline(
     logger.info("--- 5. Align candidates ---")
     
     overlap_candidates = get_overlap_candidates(neighbor_matrix,nndescent_n_neighbors)
+    
+    ##for test
+    overlap_candidates_file = join(output_dir, "overlaps_candidates.pkl")
+    with open(overlap_candidates_file, "wb") as f:
+        pickle.dump(overlap_candidates, f)
+    
+    ####
     nbr_output_file = join(output_dir, "overlaps.paf")
     run_multiprocess_alignment_optimized(
         overlap_candidates,
