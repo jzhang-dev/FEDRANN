@@ -43,8 +43,6 @@ fedrann \
     --seed 602 \
     # Ignore k-mers that appear less than 2 times to filter out sequencing errors.
     --kmer-min-multiplicity 2 \
-    # Use the mpsrp (multiprocessed sparse random projection) algorithm for dimension reduction.
-    --dimension-reduction mpsrp \
     # Save the feature matrix file after processing.
     --save-feature-matrix \
     # Use 32 CPU threads to parallelize the process.

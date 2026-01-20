@@ -30,7 +30,7 @@ from numpy.typing import NDArray
 import pysam
 
 from .custom_logging import logger
-from . import global_variables
+from . import global_variables as globals
 
 
 T = TypeVar("T")
@@ -189,7 +189,7 @@ def convert_fastq_to_fasta(fastq_path: str, fasta_path: str) -> None:
     """
     seqkit_command = [
         "seqkit", "fq2fa",
-        "-j", str(global_variables.threads),  # FASTA output
+        "-j", str(globals.threads),  # FASTA output
         fastq_path,
         "-o",
         fasta_path,
@@ -213,7 +213,7 @@ def unzip(input_path: str, output_path: str) -> None:
     unzip_command = [
         "pigz",
         "-p",
-        str(global_variables.threads),
+        str(globals.threads),
         "--decompress",
         "--stdout",
         input_path,
