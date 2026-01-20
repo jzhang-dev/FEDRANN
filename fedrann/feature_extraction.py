@@ -25,7 +25,7 @@ from .fastx_io import (
     convert_fastq_to_fasta,
     make_fasta_index,
 )
-from . import globals
+from . import global_variables as globals
 from .custom_logging import logger
 
 

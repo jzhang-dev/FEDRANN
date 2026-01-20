@@ -38,7 +38,7 @@ from .nearest_neighbors import (
     NNDescent_ava,
     HNSW,
 )
-from . import global_variables
+from . import global_variables as globals
 from .custom_logging import logger, add_log_file
 
 
@@ -208,8 +208,8 @@ def get_neighbors_ava(
             diversify_prob=1.0,
             pruning_degree_multiplier=1.5,
             low_memory=True,
-            n_jobs=global_variables.threads,
-            seed=global_variables.seed,
+            n_jobs=globals.threads,
+            seed=globals.seed,
             verbose=True,
         )
     elif method.lower() == "hnsw":
@@ -359,7 +359,7 @@ def run_fedrann_pipeline(
 
     if not keep_intermediates:
         logger.debug("Removing intermediate files")
-        rmtree(global_variables.temp_dir)
+        rmtree(globals.temp_dir)
         
     logger.info(f"Pipeline completed.")
 
@@ -374,14 +374,14 @@ def main():
 
     output_dir = abspath(args.output_dir)
     os.makedirs(output_dir, exist_ok=True)
-    global_variables.output_dir = output_dir
+    globals.output_dir = output_dir
 
     logfile = join(output_dir, "fedrann.log")
     add_log_file(logfile)
 
     temp_dir = join(output_dir, "temp")
     os.makedirs(temp_dir, exist_ok=True)
-    global_variables.temp_dir = temp_dir
+    globals.temp_dir = temp_dir
 
     logger.info(f"FEDRANN version: {__version__}")
     logger.debug(f"Input file: {args.input}")
