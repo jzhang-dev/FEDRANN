@@ -123,14 +123,6 @@ def parse_command_line_arguments():
         required=False,
         default=1,
     )
-    # parser.add_argument(
-    #     "-d",
-    #     "--dimension-reduction",
-    #     type=str,
-    #     required=False,
-    #     default="SRP",
-    #     help="Dimension reduction method",
-    # )
     parser.add_argument(
         "-n",
         "--embedding-dimension",
