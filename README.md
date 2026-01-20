@@ -4,155 +4,7 @@ Fedrann is a scalable pipeline for overlap detection based on large-scale sequen
 
 [![CI](https://github.com/jzhang-dev/FEDRANN/actions/workflows/ci.yml/badge.svg)](https://github.com/jzhang-dev/FEDRANN/actions/workflows/ci.yml)
 
-## Program Flowchart
 
-The following flowchart illustrates the main steps of the FEDRANN pipeline. The pipeline implements four operational steps that realize the three core algorithmic concepts (feature extraction encompasses steps 1-3, with dimensionality reduction precomputed in step 2 and applied in step 3):
-
-```
-                                    INPUT
-                                      |
-                                      v
-                    +----------------------------------+
-                    |  FASTQ/FASTA Sequencing Reads   |
-                    |  (e.g., reads.fasta.gz)         |
-                    +----------------------------------+
-                                      |
-                                      v
-        ===============================================================
-        |          STEP 1: K-mer Counting and Sampling              |
-        ===============================================================
-                                      |
-                    +-----------------+------------------+
-                    |                                    |
-                    v                                    v
-        +----------------------+           +-------------------------+
-        |  Jellyfish Count     |           |  Sample k-mers          |
-        |  - Count all k-mers  |  -------> |  - Sample fraction      |
-        |  - Filter by min     |           |  - Generate library     |
-        |    multiplicity      |           |  - Forward + Reverse    |
-        +----------------------+           +-------------------------+
-                                                        |
-                                                        v
-                                          +-------------------------+
-                                          |  kmer_searcher          |
-                                          |  - Find k-mer positions |
-                                          |  - Build sparse vectors |
-                                          +-------------------------+
-                                                        |
-                                                        v
-        ===============================================================
-        |   STEP 2: Dimensionality Reduction Matrix Precomputation  |
-        ===============================================================
-                                      |
-                    +-----------------+------------------+
-                    |                                    |
-                    v                                    v
-        +----------------------+           +-------------------------+
-        |  Compute IDF Weights |           |  Generate Random        |
-        |  - Calculate inverse |           |  Projection Matrix      |
-        |    document freq     |  -------> |  - Sparse Random        |
-        |  - Weight k-mers by  |           |    Projection (SRP)     |
-        |    informativeness   |           |  - n_components × n_feat|
-        +----------------------+           +-------------------------+
-                                                        |
-                                                        v
-                                          +-------------------------+
-                                          |  Precompute Matrix      |
-                                          |  (SRP_transpose × IDF)  |
-                                          +-------------------------+
-                                                        |
-                                                        v
-        ===============================================================
-        |          STEP 3: Feature Matrix Generation                |
-        ===============================================================
-                                      |
-                    +-----------------+------------------+
-                    |                                    |
-                    v                                    v
-        +----------------------+           +-------------------------+
-        |  Parse k-mer Indices |           |  Apply Precompute       |
-        |  - Read binary file  |  -------> |  Matrix                 |
-        |  - Build sparse row  |           |  - Matrix multiplication|
-        |  - Both strands      |           |  - Get embeddings       |
-        +----------------------+           +-------------------------+
-                                                        |
-                                                        v
-                                          +-------------------------+
-                                          |  Embedding Matrix       |
-                                          |  (n_reads × n_dim)      |
-                                          |  [Optional: Save]       |
-                                          +-------------------------+
-                                                        |
-                                                        v
-        ===============================================================
-        |     STEP 4: Approximate Nearest Neighbor Search           |
-        ===============================================================
-                                      |
-                    +-----------------+------------------+
-                    |                                    |
-                    v                                    v
-        +----------------------+           +-------------------------+
-        |  NNDescent Algorithm |           |  Alternative: HNSW      |
-        |  - Build index       |           |  - Hierarchical NSW     |
-        |  - n_trees parameter |           |  - Faster search        |
-        |  - Cosine distance   |           |                         |
-        +----------------------+           +-------------------------+
-                    |                                    |
-                    +------------------+-----------------+
-                                       |
-                                       v
-                        +-----------------------------+
-                        |  Neighbor Indices &         |
-                        |  Distance Matrix            |
-                        +-----------------------------+
-                                       |
-                                       v
-        ===============================================================
-        |                        OUTPUT FILES                         |
-        ===============================================================
-                                       |
-              +------------------------+------------------------+
-              |                        |                        |
-              v                        v                        v
-    +------------------+   +---------------------+   +---------------------+
-    | metadata.tsv     |   | overlaps.tsv        |   | feature_matrix.npz  |
-    |                  |   |                     |   | (optional)          |
-    | - Sequence names |   | - query_index       |   |                     |
-    | - Strand info    |   | - target_index      |   | - Embedding vectors |
-    | - Read indices   |   | - distance          |   | - Sparse format     |
-    |                  |   | - rank              |   |                     |
-    +------------------+   +---------------------+   +---------------------+
-```
-
-### Key Implementation Details
-
-1. **K-mer Feature Extraction**:
-   - Uses Jellyfish for efficient k-mer counting
-   - Filters k-mers by minimum multiplicity to reduce noise from sequencing errors
-   - Samples a fraction of k-mers to reduce dimensionality while preserving signal
-   - Custom C++ tool (`kmer_searcher`) for fast k-mer position finding
-
-2. **Dimensionality Reduction**:
-   - **Sparse Random Projection (SRP)**: Projects high-dimensional k-mer space to lower dimensions
-   - **IDF Weighting**: Weights k-mers by informativeness (inverse document frequency)
-   - Precomputes combined transformation matrix for efficient batch processing
-   - Default embedding dimension: 500
-
-3. **Feature Matrix Generation**:
-   - Processes both forward and reverse complement strands
-   - Sparse matrix operations for memory efficiency
-   - Outputs normalized embedding vectors for each read
-
-4. **Approximate Nearest Neighbor Search**:
-   - **NNDescent**: Graph-based approximate k-NN algorithm (default)
-   - Uses cosine distance metric for similarity measurement
-   - Configurable parameters: n_trees, n_neighbors, leaf_size
-   - Alternative HNSW algorithm available for different performance characteristics
-
-5. **Parallelization**:
-   - Multi-threaded processing throughout the pipeline
-   - Configurable via `--threads` parameter
-   - Efficient memory management with garbage collection
 
 ## Installation
 
@@ -258,6 +110,148 @@ query_index target_index    distance    rank
 `distance`: Measures the dissimilarity between the embedded vectors of the query and target sequences. A smaller value indicates higher similarity between the sequences.
 
 `rank`: The similarity rank of the `target_index` sequence among all potential matches for the `query_index`. A lower rank (closer to 1) signifies a better match.
+
+
+
+## Program Flowchart
+
+The following flowchart illustrates the main steps of the FEDRANN pipeline. The pipeline implements four operational steps that realize the three core algorithmic concepts (feature extraction encompasses steps 1-3, with dimensionality reduction precomputed in step 2 and applied in step 3):
+
+```
+                                    INPUT
+                                      |
+                                      v
+                    +----------------------------------+
+                    |  FASTQ/FASTA Sequencing Reads   |
+                    |  (e.g., reads.fasta.gz)         |
+                    +----------------------------------+
+                                      |
+                                      v
+        ===============================================================
+        |          STEP 1: K-mer Counting and Sampling              |
+        ===============================================================
+                                      |
+                    +-----------------+------------------+
+                    |                                    |
+                    v                                    v
+        +----------------------+           +-------------------------+
+        |  Jellyfish Count     |           |  Sample k-mers          |
+        |  - Count all k-mers  |  -------> |  - Sample fraction      |
+        |  - Filter by min     |           |  - Generate library     |
+        |    multiplicity      |           |  - Forward + Reverse    |
+        +----------------------+           +-------------------------+
+                                                        |
+                                                        v
+                                          +-------------------------+
+                                          |  kmer_searcher          |
+                                          |  - Find k-mer positions |
+                                          |  - Build sparse vectors |
+                                          +-------------------------+
+                                                        |
+                                                        v
+        ===============================================================
+        |   STEP 2: Dimensionality Reduction Matrix Precomputation  |
+        ===============================================================
+                                      |
+                    +-----------------+------------------+
+                    |                                    |
+                    v                                    v
+        +----------------------+           +-------------------------+
+        |  Compute IDF Weights |           |  Generate Random        |
+        |  - Calculate inverse |           |  Projection Matrix      |
+        |    document freq     |  -------> |  - Sparse Random        |
+        |  - Weight k-mers by  |           |    Projection (SRP)     |
+        |    informativeness   |           |  - n_components × n_feat|
+        +----------------------+           +-------------------------+
+                                                        |
+                                                        v
+                                          +-------------------------+
+                                          |  Precompute Matrix      |
+                                          |  (SRP_transpose × ICF)  |
+                                          +-------------------------+
+                                                        |
+                                                        v
+        ===============================================================
+        |          STEP 3: Feature Matrix Generation                |
+        ===============================================================
+                                      |
+                    +-----------------+------------------+
+                    |                                    |
+                    v                                    v
+        +----------------------+           +-------------------------+
+        |  Parse k-mer Indices |           |  Apply Precompute       |
+        |  - Read binary file  |  -------> |  Matrix                 |
+        |  - Build sparse row  |           |  - Matrix multiplication|
+        |  - Both strands      |           |  - Get embeddings       |
+        +----------------------+           +-------------------------+
+                                                        |
+                                                        v
+                                          +-------------------------+
+                                          |  Embedding Matrix       |
+                                          |  (n_reads × n_dim)      |
+                                          |  [Optional: Save]       |
+                                          +-------------------------+
+                                                        |
+                                                        v
+        ===============================================================
+        |     STEP 4: Approximate Nearest Neighbor Search           |
+        ===============================================================
+                          |
+                          v
+                +-----------------------------+
+                |  NNDescent Algorithm        |
+                |  - Build k-NN graph index   |
+                |  - Graph-based search       |
+                |  - Cosine distance metric   |
+                +-----------------------------+
+                          |
+                          v
+                +-----------------------------+
+                |  Neighbor Indices &         |
+                |  Distance Matrix            |
+                +-----------------------------+
+                          |
+                          v
+        ===============================================================
+        |                        OUTPUT FILES                         |
+        ===============================================================
+                                       |
+              +------------------------+------------------------+
+              |                        |                        |
+              v                        v                        v
+    +------------------+   +---------------------+   +---------------------+
+    | metadata.tsv     |   | overlaps.tsv        |   | feature_matrix.npz  |
+    |                  |   |                     |   | (optional)          |
+    | - Sequence names |   | - query_index       |   |                     |
+    | - Strand info    |   | - target_index      |   | - Embedding vectors |
+    | - Read indices   |   | - distance          |   | - Sparse format     |
+    |                  |   | - rank              |   |                     |
+    +------------------+   +---------------------+   +---------------------+
+```
+
+### Key Implementation Details
+
+1. **K-mer Feature Extraction**:
+   - Uses Jellyfish for efficient k-mer counting
+   - Filters k-mers by minimum multiplicity to reduce noise from sequencing errors
+   - Samples a fraction of k-mers to reduce dimensionality while preserving signal
+   - Custom C++ tool (`kmer_searcher`) for fast k-mer position finding
+
+2. **Dimensionality Reduction**:
+   - **Sparse Random Projection (SRP)**: Projects high-dimensional k-mer space to lower dimensions
+   - **IDF Weighting**: Applies inverse collection frequency (ICF) as a practical approximation of IDF, leveraging Jellyfish's efficient k-mer counting
+   - Precomputes combined transformation matrix for efficient batch processing
+
+3. **Feature Matrix Generation**:
+   - Processes both forward and reverse complement strands
+   - Sparse matrix operations for memory efficiency
+   - Outputs normalized embedding vectors for each read
+
+4. **Approximate Nearest Neighbor Search**:
+   - **NNDescent**: Graph-based approximate k-NN algorithm
+   - Uses cosine distance metric for similarity measurement
+
+
 
 ## License
 
