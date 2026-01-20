@@ -41,7 +41,7 @@ The following flowchart illustrates the main steps of the FEDRANN pipeline. The 
                                                         |
                                                         v
         ===============================================================
-        |     STEP 2: Dimension Reduction Matrix Precomputation    |
+        |   STEP 2: Dimensionality Reduction Matrix Precomputation  |
         ===============================================================
                                       |
                     +-----------------+------------------+
