@@ -1,12 +1,12 @@
 # Fedrann
 
-Fedrann is a scalable pipeline for overlap detection based on large-scale sequencing data. It is based on three steps: **f**eature **e**xtraction, **d**imenality **r**eduction, and **a**pproximate *k*-**n**earest **n**eighbor search. 
+Fedrann is a scalable pipeline for overlap detection based on large-scale sequencing data. It is based on three core concepts: **f**eature **e**xtraction, **d**imensionality **r**eduction, and **a**pproximate *k*-**n**earest **n**eighbor search. 
 
 [![CI](https://github.com/jzhang-dev/FEDRANN/actions/workflows/ci.yml/badge.svg)](https://github.com/jzhang-dev/FEDRANN/actions/workflows/ci.yml)
 
 ## Program Flowchart
 
-The following flowchart illustrates the main steps of the FEDRANN pipeline:
+The following flowchart illustrates the main steps of the FEDRANN pipeline. The pipeline implements four operational steps that realize the three core algorithmic concepts (feature extraction encompasses steps 1-3, with dimensionality reduction precomputed in step 2 and applied in step 3):
 
 ```
                                     INPUT
