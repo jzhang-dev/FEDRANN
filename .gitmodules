@@ -4,3 +4,6 @@
 [submodule "external/robin-hood-hashing"]
 	path = external/robin-hood-hashing
 	url = git@github.com:martinus/robin-hood-hashing.git
+[submodule "Weighted_Align"]
+	path = Weighted_Align
+	url = git@github.com:CycloneSEQ-Bioinformatics/Weighted_Align.git

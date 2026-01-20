@@ -25,21 +25,26 @@ from scipy.sparse._csr import csr_matrix
 from memory_profiler import memory_usage
 from numpy.typing import NDArray
 import logging
-
+from itertools import islice
+import pickle
 from . import __version__, __description__
 
 from .feature_extraction import (
     get_feature_matrix,
+    get_metadata
 )
 from .count_kmers import run_kmer_searcher
 from .precompute import get_precompute_matrix
-from .nearest_neighbors import (
-    ExactNearestNeighbors,
-    NNDescent_ava,
-    HNSW,
-)
+from .nearest_neighbors import NNDescent_ava
 from . import global_variables
 from .custom_logging import logger, add_log_file
+from .align import (
+    Seq,
+    get_overlap_candidates,
+    run_multiprocess_alignment_optimized,
+    cWeightedSemiglobalAligner,
+    AlignmentResult
+    )
 
 
 logger.setLevel(logging.DEBUG)
@@ -87,14 +92,7 @@ def parse_command_line_arguments():
         required=True,
         help="Directory to save output files.",
     )
-    # parser.add_argument(
-    #     "-p",
-    #     "--preprocess",
-    #     type=str,
-    #     required=False,
-    #     default="IDF",
-    #     help="Preprocess method you want to implement to matrix.(TF/IDF/TF-IDF/None/count)",
-    # )
+
     parser.add_argument(
         "-k",
         "--kmer-size",
@@ -118,31 +116,26 @@ def parse_command_line_arguments():
         help="Minimum allowed frequency of a k-mer in all reads.",
     )
     parser.add_argument(
+        "-t",
         "--threads",
         type=int,
         required=False,
         default=1,
     )
-    # parser.add_argument(
-    #     "-d",
-    #     "--dimension-reduction",
-    #     type=str,
-    #     required=False,
-    #     default="SRP",
-    #     help="Dimension reduction method",
-    # )
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        required=False,
+        default=1000,
+        help="Number of reads to process in each chunk when generating the feature matrix.",
+    )
+
     parser.add_argument(
         "-n",
         "--embedding-dimension",
         type=int,
         required=False,
         default=500,
-    )
-    parser.add_argument(
-        "--knn",
-        type=str,
-        required=False,
-        default="NNDescent",
     )
     parser.add_argument(
         "--nndescent-n-trees",
@@ -167,7 +160,7 @@ def parse_command_line_arguments():
         "--save-feature-matrix",
         action="store_true",
         default=False,
-        help="Save the feature matrix to a file.",
+        help="Save the embedding feature matrix to a file.",
     )
     parser.add_argument(
         "--keep-intermediates",
@@ -189,34 +182,29 @@ def parse_command_line_arguments():
 
 def get_neighbors_ava(
     embedding_matrix: NDArray,
-    method: str,
     nndescent_n_trees: int,
     nndescent_n_neighbors: int,
     leaf_size: int = 200,
 ) -> tuple[NDArray, NDArray]:
-    if method.lower() == "nndescent":
-        logger.info(
-            f"Using NNDescent method to find nearest neighbors (n_trees = {nndescent_n_trees}, left_size = {leaf_size})"
-        )
-        neighbor_indices, distances = NNDescent_ava().get_neighbors(
-            embedding_matrix,
-            metric="cosine",
-            index_n_neighbors=nndescent_n_neighbors,
-            n_trees=nndescent_n_trees,
-            leaf_size=leaf_size,
-            n_iters=None,
-            diversify_prob=1.0,
-            pruning_degree_multiplier=1.5,
-            low_memory=True,
-            n_jobs=global_variables.threads,
-            seed=global_variables.seed,
-            verbose=True,
-        )
-    elif method.lower() == "hnsw":
-        logger.info("Using HNSW method to find nearest neighbors.")
-        raise NotImplementedError()
-    else:
-        raise ValueError(f"Invalid method: {method}. Expected 'nndescent' or 'hnsw'.")
+    logger.info(
+        f"Using NNDescent method to find nearest neighbors (n_trees = {nndescent_n_trees}, left_size = {leaf_size})"
+    )
+
+    neighbor_indices, distances = NNDescent_ava().get_neighbors(
+        embedding_matrix,
+        metric="cosine",
+        index_n_neighbors=nndescent_n_neighbors,
+        n_trees=nndescent_n_trees,
+        leaf_size=leaf_size,
+        n_iters=None,
+        diversify_prob=1.0,
+        pruning_degree_multiplier=1.5,
+        low_memory=True,
+        n_jobs=global_variables.threads,
+        seed=global_variables.seed,
+        verbose=True,
+    )
+
     return neighbor_indices, distances
 
 
@@ -279,7 +267,6 @@ def get_metadata_table(
     metadata_df = pd.DataFrame(metadata)
     return metadata_df
 
-
 def run_fedrann_pipeline(
     *,
     input_path: str,
@@ -288,75 +275,85 @@ def run_fedrann_pipeline(
     kmer_sample_fraction: float,
     kmer_min_multiplicity: int,
     embedding_dimension: int,
-    knn: str,
     nndescent_n_trees: int,
     nndescent_n_neighbors: int,
     save_feature_matrix: bool,
     keep_intermediates: bool,
+    chunk_size: int
 ):
     """
     Run the SeqNeighbor pipeline with the specified parameters.
     """
     # Extract features
     logger.info("--- 1. Counter kmers ---")
-    kmer_searcher_output_path,kmer_counter_path,n_features = run_kmer_searcher(
+    kmer_searcher_output_path,n_features,read_count = run_kmer_searcher(
         input_path=input_path,
         k=kmer_size,
         sample_fraction=kmer_sample_fraction,
         min_multiplicity=kmer_min_multiplicity
     )
-    logger.debug(f"kmer_searcher n_features: {n_features}")
     
     logger.info("--- 2. Generate dimension reduction and IDF matrix ---")
+    fwd_kmer_library_path = join(global_variables.temp_dir, "fwd_kmer_library.fasta")
     precompute_mat,n_features = get_precompute_matrix(
         n_components=embedding_dimension,
-        counter_file=kmer_counter_path,
+        counter_file=fwd_kmer_library_path,
         n_features=n_features
     )
-    logger.debug(f"get_precompute_matrix n_features: {n_features}")
-    
+        
     logger.info("--- 3. Generate feature matrix ---")
-    embedding_matrix, read_names, strands = get_feature_matrix(
+    embedding_matrix = get_feature_matrix(
         ks_file=kmer_searcher_output_path,
+        fasta_file=input_path,
         precompute_matrix=precompute_mat,
-        kmer_count=n_features
-    )
-
-    # Save metadata
-    metadata_output_file = join(output_dir, "metadata.tsv")
-    logger.info(f"Saved metadata table to {metadata_output_file}")
-    metadata_df = get_metadata_table(
-        read_names=read_names,
-        strands=strands,
-    )
-    metadata_df.to_csv(metadata_output_file, sep="\t", index=False)
-    del read_names, strands
-    gc.collect()
+        kmer_count=n_features,
+        read_count=read_count,
+        chunk_size=chunk_size
+    )    
+    encoded_reads = get_metadata(kmer_searcher_output_path,input_path,n_features)
     
-
+    if save_feature_matrix:
+        feature_matrix_file = join(output_dir, "embedding_feature_matrix.npy")
+        logger.debug(f"Saving feature matrix to {feature_matrix_file}")
+        np.save(feature_matrix_file, embedding_matrix)
+        
     # Nearest neighbors search
     logger.info("--- 4. Nearest Neighbors Search ---")
     neighbor_matrix, distances = get_neighbors_ava(
         embedding_matrix,
-        method=knn,
         nndescent_n_trees=nndescent_n_trees,
         nndescent_n_neighbors=nndescent_n_neighbors,
     )
+
     del embedding_matrix
     gc.collect()
 
-    # Save output
-    nbr_output_file = join(output_dir, "overlaps.tsv")
-    logger.debug("Saving overlap table to %s", nbr_output_file)
-
-    nbr_df = get_neighbor_table(
-        neighbor_matrix=neighbor_matrix,
-        neighbor_distances=distances,
+    logger.info("--- 5. Align candidates ---")
+    
+    overlap_candidates = get_overlap_candidates(neighbor_matrix,nndescent_n_neighbors)
+    
+    ##for test
+    overlap_candidates_file = join(output_dir, "overlaps_candidates.pkl")
+    with open(overlap_candidates_file, "wb") as f:
+        pickle.dump(overlap_candidates, f)
+    
+    ####
+    nbr_output_file = join(output_dir, "overlaps.paf")
+    run_multiprocess_alignment_optimized(
+        overlap_candidates,
+        encoded_reads,
+        marker_weights=None,
+        kmer_size=kmer_size,
+        aligner=cWeightedSemiglobalAligner,
+        processes=global_variables.threads,
+        batch_size=100,
+        output_path=nbr_output_file,
+        max_total_wait_seconds=600,
     )
-    del neighbor_matrix, distances
-    gc.collect()
-    nbr_df.to_csv(nbr_output_file, sep="\t", index=False)
-
+    # Save output
+    
+    logger.debug("Saving overlap table to %s", nbr_output_file)
+    
     if not keep_intermediates:
         logger.debug("Removing intermediate files")
         rmtree(global_variables.temp_dir)
@@ -366,8 +363,8 @@ def run_fedrann_pipeline(
 
 def main():
     args = parse_command_line_arguments()
-    globals.threads = args.threads
-    globals.seed = args.seed
+    global_variables.threads = args.threads
+    global_variables.seed = args.seed
 
     if not which("kmer_searcher"):
         raise RuntimeError("Unable to find 'kmer_searcher' executable.")
@@ -396,40 +393,38 @@ def main():
         kmer_sample_fraction=args.kmer_sample_fraction,
         kmer_min_multiplicity=args.kmer_min_multiplicity,
         embedding_dimension=args.embedding_dimension,
-        knn=args.knn,
         nndescent_n_trees=args.nndescent_n_trees,
         nndescent_n_neighbors=args.nndescent_n_neighbors,
         keep_intermediates=args.keep_intermediates,
         save_feature_matrix=args.save_feature_matrix,
+        chunk_size=args.chunk_size
     )
+    
     if args.mprof:
-        logger.debug("Attention: Memory profiling enabled. Running with memory profiler.")
         mprof_dir = join(output_dir, "mprof")
         os.makedirs(mprof_dir, exist_ok=True)
         mprof_output_path = join(mprof_dir, "memory_profile.dat")
         
-        # 确保函数有足够的执行时间
-        @memory_usage(
-            backend="psutil",
-            interval=1,
-            multiprocess=True,
-            include_children=True,
-            timestamps=True,
-            max_usage=False,
-            stream=open(mprof_output_path, "wt")  # 直接传入文件流
-        )
-        def profiled_function():
-            return f()
-        
-        # 执行并确保文件关闭
-        try:
-            profiled_function()
-        finally:
-            # 确保文件正确关闭
-            if 'profiled_function' in locals():
-                # 获取stream并关闭
-                pass
+        with open(mprof_output_path, "wt") as f_stream:
+            logger.debug(f"Profiling to {mprof_output_path}")
+            
+            # 1. 运行并获取返回的结果列表
+            mem_result = memory_usage(
+                f, 
+                backend="psutil",
+                interval=1,               
+                multiprocess=True,
+                include_children=True,
+                timestamps=True
+            )
+
+            # 2. 手动将结果写入文件 (模拟 mprof 的格式)
+            f_stream.write("MT 1.0\n") # mprof 标识符
+            for mem, ts in mem_result:
+                f_stream.write(f"MEM {mem:.6f} {ts:.6f}\n")
+            f_stream.flush() # 强制刷入
     else:
+        # 正常执行
         f()
         
 
