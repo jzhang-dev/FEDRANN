@@ -1,5 +1,7 @@
 test_data/
 data/
+notebooks/
+test/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

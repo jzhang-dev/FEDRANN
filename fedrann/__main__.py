@@ -114,12 +114,6 @@ def parse_command_line_arguments():
         default=1,
     )
     parser.add_argument(
-        "--nearest-neighbor-threads",
-        type=int,
-        required=False,
-        default=1,
-    )
-    parser.add_argument(
         "--chunk-size",
         type=int,
         required=False,
@@ -185,9 +179,7 @@ def get_neighbors_ava(
     logger.info(
         f"Using NNDescent method to find nearest neighbors (n_trees = {nndescent_n_trees}, left_size = {leaf_size})"
     )
-    logger.info(
-        f"Using {global_variables.nearest_neighbor_threads} threads"
-    )
+
     neighbor_indices, distances = NNDescent_ava().get_neighbors(
         embedding_matrix,
         metric="cosine",
@@ -198,7 +190,7 @@ def get_neighbors_ava(
         diversify_prob=1.0,
         pruning_degree_multiplier=1.5,
         low_memory=True,
-        n_jobs=global_variables.nearest_neighbor_threads,
+        n_jobs=global_variables.threads,
         seed=global_variables.seed,
         verbose=True,
     )
@@ -321,7 +313,7 @@ def run_fedrann_pipeline(
     """
     # Extract features
     logger.info("--- 1. Counter kmers ---")
-    kmer_searcher_output_path,kmer_counter_path,n_features,read_count = run_kmer_searcher(
+    kmer_searcher_output_path,n_features,read_count = run_kmer_searcher(
         input_path=input_path,
         k=kmer_size,
         sample_fraction=kmer_sample_fraction,
@@ -397,7 +389,6 @@ def main():
     args = parse_command_line_arguments()
     global_variables.threads = args.threads
     global_variables.seed = args.seed
-    global_variables.nearest_neighbor_threads = args.nearest_neighbor_threads
 
     if not which("kmer_searcher"):
         raise RuntimeError("Unable to find 'kmer_searcher' executable.")
@@ -433,36 +424,31 @@ def main():
         chunk_size=args.chunk_size
     )
     if args.mprof:
-        logger.debug("Attention: Memory profiling enabled. Running with memory profiler.")
         mprof_dir = join(output_dir, "mprof")
         os.makedirs(mprof_dir, exist_ok=True)
         mprof_output_path = join(mprof_dir, "memory_profile.dat")
         
-        # 确保函数有足够的执行时间
-        @memory_usage(
-            backend="psutil",
-            interval=1,
-            multiprocess=True,
-            include_children=True,
-            timestamps=True,
-            max_usage=False,
-            stream=open(mprof_output_path, "wt")  # 直接传入文件流
-        )
-        def profiled_function():
-            return f()
-        
-        # 执行并确保文件关闭
-        try:
-            profiled_function()
-        finally:
-            # 确保文件正确关闭
-            if 'profiled_function' in locals():
-                # 获取stream并关闭
-                pass
-    else:
-        f()
-        
+        with open(mprof_output_path, "wt") as f_stream:
+            logger.debug(f"Profiling to {mprof_output_path}")
+            
+            # 1. 运行并获取返回的结果列表
+            mem_result = memory_usage(
+                f, 
+                backend="psutil",
+                interval=1,               
+                multiprocess=True,
+                include_children=True,
+                timestamps=True
+            )
 
+            # 2. 手动将结果写入文件 (模拟 mprof 的格式)
+            f_stream.write("MT 1.0\n") # mprof 标识符
+            for mem, ts in mem_result:
+                f_stream.write(f"MEM {mem:.6f} {ts:.6f}\n")
+            f_stream.flush() # 强制刷入
+    else:
+        # 正常执行
+        f()
 
 if __name__ == "__main__":
     multiprocessing.set_start_method("spawn")
