@@ -381,7 +381,7 @@ def run_fedrann_pipeline(
 
     if not keep_intermediates:
         logger.debug("Removing intermediate files")
-        rmtree(globals.temp_dir)
+        rmtree(global_variables.temp_dir)
         
     logger.info(f"Pipeline completed.")
 
@@ -396,14 +396,14 @@ def main():
 
     output_dir = abspath(args.output_dir)
     os.makedirs(output_dir, exist_ok=True)
-    globals.output_dir = output_dir
+    global_variables.output_dir = output_dir
 
     logfile = join(output_dir, "fedrann.log")
     add_log_file(logfile)
 
     temp_dir = join(output_dir, "temp")
     os.makedirs(temp_dir, exist_ok=True)
-    globals.temp_dir = temp_dir
+    global_variables.temp_dir = temp_dir
 
     logger.info(f"FEDRANN version: {__version__}")
     logger.debug(f"Input file: {args.input}")
