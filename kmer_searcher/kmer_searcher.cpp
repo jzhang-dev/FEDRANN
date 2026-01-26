@@ -51,22 +51,40 @@ private:
     mutable std::mutex mutex_;
 };
 
-// 线程安全的k-mer统计
+using LocalKmerStats = std::unordered_map<uint64_t, uint64_t>; 
+
 class ThreadSafeKmerStats {
 public:
-    void increment(uint64_t kmer_index) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        counts_[kmer_index]++;
-    }
+    // 构造函数：初始化向量的大小
+    ThreadSafeKmerStats(size_t num_unique_kmers) : counts_(num_unique_kmers, 0) {}
 
-    const std::unordered_map<uint64_t, uint64_t>& get_counts() const {
-        return counts_;
-    }
+    // 1. 【核心功能】安全地合并本地统计结果
+    void merge(const LocalKmerStats& local_counts) {
+        // 依然只在这里使用一次锁
+        std::lock_guard<std::mutex> lock(mutex_); 
+        for (const auto& pair : local_counts) {
+            // 注意：这里 pair.first 必须是 k-mer 索引 (0, 1, 2...)
+            // 而不是 k-mer 编码！
+            // 假设 LocalKmerStats 在主函数中被修改为使用索引作为键
+            uint64_t kmer_index = pair.first;
+            counts_[kmer_index] += pair.second;
+        }
+    } 
 
+    // 2. 安全地获取最终结果（返回副本或引用，取决于需求）
+    // 返回 const 引用，避免复制整个巨大的向量
+    const std::vector<uint64_t>& get_counts() const {
+        // 在返回引用前加锁，确保读取时数据一致
+        std::lock_guard<std::mutex> lock(mutex_); 
+        return counts_; 
+    }
+    
 private:
-    std::unordered_map<uint64_t, uint64_t> counts_;
+    // 替换为 vector，其索引就是 k-mer 索引
+    std::vector<uint64_t> counts_;
     mutable std::mutex mutex_;
 };
+
 
 // 线程安全的输出存储
 class ThreadSafeOutput {
@@ -182,28 +200,33 @@ void read_sequences(const std::string& filename, ThreadSafeQueue<SequenceRecord>
     }
 }
 
-void writeKmerStatsToBinary(const std::unordered_map<uint64_t, uint64_t>& kmer_record_counts, 
-                           const std::string& filename) {
+void writeKmerStatsToBinary(const std::vector<uint64_t>& kmer_record_counts, 
+                           const std::string& filename) { 
+
     std::ofstream outfile(filename, std::ios::binary);
     if (!outfile.is_open()) {
         std::cerr << "无法打开文件: " << filename << std::endl;
         return;
     }
 
-    
-    // 遍历所有k-mer
-    for (const auto& [kmer_index, count] : kmer_record_counts) {
+    // 遍历所有 k-mer。i 就是 k-mer 索引。
+    for (size_t i = 0; i < kmer_record_counts.size(); ++i) {
+        uint64_t count = kmer_record_counts[i];
         
-        // 写入k-mer索引
-        outfile.write(reinterpret_cast<const char*>(&kmer_index), sizeof(kmer_index));
+        // 优化：跳过计数为 0 的 k-mer
+        if (count == 0) continue; 
+        
+        // i 就是我们要存储的 k-mer 索引
+        uint64_t kmer_index_val = i; 
+        
+        // 写入 k-mer 索引
+        outfile.write(reinterpret_cast<const char*>(&kmer_index_val), sizeof(kmer_index_val)); 
         // 写入记录数量
         outfile.write(reinterpret_cast<const char*>(&count), sizeof(count));
-        
     }
     
     outfile.close();
 }
-
 
 
 int main(int argc, char* argv[]) {
@@ -248,12 +271,14 @@ int main(int argc, char* argv[]) {
             }
         }
     }
+    size_t num_unique_kmers = index_to_kmer.size(); 
 
+    // 实例化 ThreadSafeKmerStats
+    ThreadSafeKmerStats global_kmer_stats(num_unique_kmers);
     // 准备多线程处理
     ThreadSafeQueue<SequenceRecord> work_queue;
     std::atomic<bool> done_reading{false};
     ThreadSafeOutput global_output;
-    ThreadSafeKmerStats global_kmer_stats;  // 线程安全的统计
 
     // 生产者线程
     std::thread producer([&]() {
@@ -269,6 +294,7 @@ int main(int argc, char* argv[]) {
     // 消费者线程函数
     auto consumer = [&]() {
         std::vector<SequenceRecord> batch;
+        LocalKmerStats local_kmer_stats;
         batch.reserve(BATCH_SIZE);
 
         while (true) {
@@ -297,11 +323,11 @@ int main(int argc, char* argv[]) {
                 }
 
                 if (current_kmer != UINT64_MAX && kmer_to_index.count(current_kmer)) {
-                    uint64_t kmer_index = kmer_to_index[current_kmer];
+                    uint64_t kmer_index = kmer_to_index.at(current_kmer); // 使用 .at() 或 []
                     if (index_set.insert(kmer_index).second) {
-                        global_kmer_stats.increment(kmer_index);
+                        local_kmer_stats[kmer_index]++; // <-- 更新本地
+                        }
                     }
-                }
 
                 // 滑动窗口
                 for (int i = K; i < record.sequence.size(); ++i) {
@@ -315,15 +341,16 @@ int main(int argc, char* argv[]) {
                     }
 
                     if (current_kmer != UINT64_MAX && kmer_to_index.count(current_kmer)) {
-                        uint64_t kmer_index = kmer_to_index[current_kmer];
+                        uint64_t kmer_index = kmer_to_index.at(current_kmer); // 使用 .at() 或 []
                         if (index_set.insert(kmer_index).second) {
-                            global_kmer_stats.increment(kmer_index);
+                            local_kmer_stats[kmer_index]++; // <-- 更新本地
+                            }
                         }
-                    }
                 }
                 global_output.add_result(record.id, index_set);
             }
         }
+        global_kmer_stats.merge(local_kmer_stats);
     };
 
     // 启动消费者线程
