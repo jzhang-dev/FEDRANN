@@ -61,53 +61,33 @@ Fedrann generates the following output files to help you understand your analysi
 
 - `fedrann.log`: A log file that details the pipeline's progress, from start to finish.
 
-- `overlaps.tsv`: This file contains a list of every sequence analyzed, including its name and orientation.
-
-- `metadata.tsv`: This file lists all identified candidate overlaps and their similarity metrics.
+- `overlaps.tsv`: This file lists all identified candidate overlaps with sequence names, orientations, and their similarity metrics.
 
 - `feature_matrix.npz`: (Optional) This sparse-format file contains the feature matrix generated during the analysis.
 
 ### `overlaps.tsv`
-This file serves as a reference for all input sequences. The index column provides a numerical identifier for each sequence. The `read_name` column contains the original name of the sequence, while the `strand` column specifies its orientation. A strand value of `0` denotes the original sequence, and a value of `1` denotes its reverse complement.
+This file details the candidate overlaps identified by the tool. Each row represents a potential overlap between two sequences.
 
 Example `overlaps.tsv` file:
 ```
-index   read_name   strand
-0   c2924806-d5c6-4564-b31a-c701c0226fbc    0
-1   c29246d8-d6c6-4564-b31a-c701c0226fbc    1
-2   b5ec3070-2ba3-430d-a55d-1d7b178c8d36    0
-3   b5ec3070-2ba3-430d-a55d-1d7b178c8d36    1
-4   5b1d405b-08b4-448d-b601-dd922aa9380c    0
-5   5b1d405b-08b4-448d-b601-dd922aa9380c    1
-6   f3d50991-ad3e-4564-98de-97bf986f992c    0
-7   f3d50991-ad3e-4564-98de-97bf986f992c    1
-8   316caa78-7d27-4d49-b0f3-684fa17063e4    0
-9   316caa78-7d27-4d49-b0f3-684fa17063e4    1
-10  7b2ee773-fc72-4b54-b6fe-a412df3f8744    0
+query_name	query_orientation	target_name	target_orientation	neighbor_rank	distance
+c2924806-d5c6-4564-b31a-c701c0226fbc	+	7e3d8f0e-fcf0-4073-ad6b-6d742245f29b	+	1	0.6606640366100363
+c2924806-d5c6-4564-b31a-c701c0226fbc	+	dd1acbc0-f219-4701-b1eb-00b9850d3d9e	-	2	0.6690033249609217
+c2924806-d5c6-4564-b31a-c701c0226fbc	+	9b58f527-6e4d-4005-92cb-4863b6d42229	+	3	0.7207873470869667
+c2924806-d5c6-4564-b31a-c701c0226fbc	+	932c6e73-e5d9-4bbe-b88f-e4babfc043a1	-	4	0.7347354015555427
+c2924806-d5c6-4564-b31a-c701c0226fbc	+	416c786a-11f1-487f-99cc-830a40ee1c6c	-	5	0.7421239213106542
+c2924806-d5c6-4564-b31a-c701c0226fbc	+	99640d4e-d299-414c-ade3-ebe567b4d1ef	+	6	0.7520030538483087
+c2924806-d5c6-4564-b31a-c701c0226fbc	+	ffdda27d-9d97-4d01-8e61-8a6e281e0f69	+	7	0.7670946853284661
+c2924806-d5c6-4564-b31a-c701c0226fbc	+	2e92fbd0-4577-405f-a0c4-5123179a9e78	+	8	0.7840616303663797
 ```
 
-### `metadata.tsv`
-This file details the candidate overlaps identified by the tool. You can use the `query_index` and `target_index` to look up the full sequence names in the `overlaps.tsv` file.
-
-Example `metadata.tsv` file:
-```
-query_index target_index    distance    rank
-0   6541    0.6878114767745782  1
-0   828 0.6921228205223058  2
-0   10329   0.7078562118327599  3
-0   2847    0.7284434279308162  4
-0   9642    0.7328719782924367  5
-0   7857    0.7369192193171591  6
-1   10328   0.661215875322702   1
-1   6540    0.6803799447921752  2
-1   5053    0.724938780681381   3
-1   2846    0.7418480245039423  4
-1   829 0.7578067926101968  5
-1   9622    0.7603659996459153  6
-```
-`distance`: Measures the dissimilarity between the embedded vectors of the query and target sequences. A smaller value indicates higher similarity between the sequences.
-
-`rank`: The similarity rank of the `target_index` sequence among all potential matches for the `query_index`. A lower rank (closer to 1) signifies a better match.
+Column descriptions:
+- `query_name`: The name of the query sequence
+- `query_orientation`: The orientation of the query sequence (`+` for forward, `-` for reverse complement)
+- `target_name`: The name of the target sequence
+- `target_orientation`: The orientation of the target sequence (`+` for forward, `-` for reverse complement)
+- `neighbor_rank`: The similarity rank of the target sequence among all potential matches for the query sequence, where `1` is the best match, `2` is the second best, and so on.
+- `distance`: Measures the dissimilarity between the embedded vectors of the query and target sequences. A smaller value indicates higher similarity between the sequences.
 
 
 
@@ -215,16 +195,18 @@ The following flowchart illustrates the main steps of the FEDRANN pipeline. The 
         ===============================================================
                                        |
               +------------------------+------------------------+
-              |                        |                        |
-              v                        v                        v
-    +------------------+   +---------------------+   +---------------------+
-    | metadata.tsv     |   | overlaps.tsv        |   | feature_matrix.npz  |
-    |                  |   |                     |   | (optional)          |
-    | - Sequence names |   | - query_index       |   |                     |
-    | - Strand info    |   | - target_index      |   | - Embedding vectors |
-    | - Read indices   |   | - distance          |   | - Sparse format     |
-    |                  |   | - rank              |   |                     |
-    +------------------+   +---------------------+   +---------------------+
+              |                                                 |
+              v                                                 v
+    +---------------------+                          +---------------------+
+    | overlaps.tsv        |                          | feature_matrix.npz  |
+    |                     |                          | (optional)          |
+    | - query_name        |                          |                     |
+    | - query_orientation |                          | - Embedding vectors |
+    | - target_name       |                          | - Sparse format     |
+    | - target_orientation|                          |                     |
+    | - neighbor_rank     |                          +---------------------+
+    | - distance          |
+    +---------------------+
 ```
 
 ### Key Implementation Details
