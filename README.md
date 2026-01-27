@@ -86,7 +86,7 @@ Column descriptions:
 - `query_orientation`: The orientation of the query sequence (`+` for forward, `-` for reverse complement)
 - `target_name`: The name of the target sequence
 - `target_orientation`: The orientation of the target sequence (`+` for forward, `-` for reverse complement)
-- `neighbor_rank`: The similarity rank of the target sequence among all potential matches for the query sequence. A rank of `1` indicates the closest match.
+- `neighbor_rank`: The similarity rank of the target sequence among all potential matches for the query sequence, where `1` is the best match, `2` is the second best, and so on.
 - `distance`: Measures the dissimilarity between the embedded vectors of the query and target sequences. A smaller value indicates higher similarity between the sequences.
 
 
