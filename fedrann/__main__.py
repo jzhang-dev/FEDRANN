@@ -260,12 +260,14 @@ def get_metadata_table(
 
 def get_output_dataframe(
     neighbor_matrix: NDArray,
+    neighbor_distances: NDArray,
     read_names: List[str],
     strands: list[int],
 ) -> pd.DataFrame:
     query_names = []
     target_names = []
     ranks = []
+    distances = []
     query_orientations = []
     target_orientations = []
 
@@ -283,13 +285,15 @@ def get_output_dataframe(
             target_names.append(target_name)
             target_orientations.append(target_orientation)
             ranks.append(rank)
-
+            distances.append(neighbor_distances[query_index][rank])
+            
     columns = {
         "query_name": query_names,
         "query_orientation": query_orientations,
         "target_name": target_names,
         "target_orientation": target_orientations,
         "neighbor_rank": ranks,
+        "distance": distances,
     }
     df = pd.DataFrame(columns)
     logger.debug(f"Output DataFrame shape: {df.shape}")
@@ -373,6 +377,7 @@ def run_fedrann_pipeline(
     
     df = get_output_dataframe(
         neighbor_matrix=neighbor_matrix, 
+        neighbor_distances=distances,
         read_names=read_names, 
         strands=strands
     )
