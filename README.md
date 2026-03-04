@@ -235,7 +235,9 @@ The following flowchart illustrates the main steps of the FEDRANN pipeline. The 
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0. See [LICENSE](LICENSE) for details.
+License
+
+This project is licensed under the GPL-3.0 License. However, the test dataset located at test/data/reads.fasta.gz is explicitly released under the CC0 1.0 Universal license to facilitate maximum reproducibility.
 
 ## Contact
 
