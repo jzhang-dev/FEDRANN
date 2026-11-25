@@ -246,6 +246,8 @@ Email: zhangjiayuan@genomics.cn, miaochangjiu@genomics.cn
 
 ## Citation
 
+Zhang, J. Y., Miao, C., Qiu, T., He, J., Cao, W., Lin, W., ... & Dong, Y. (2026). FEDRANN: effective long-read overlap detection based on dimensionality reduction and approximate nearest neighbors. GigaScience, 15, giag048.
+
 Zhang, J. Y., Miao, C., Qiu, T., Xia, X., He, L., He, J., ... & Dong, Y. (2025). FEDRANN: effective long-read overlap detection based on dimensionality reduction and approximate nearest neighbors. bioRxiv, 2025-05. https://www.biorxiv.org/content/10.1101/2025.05.30.656979v3
 
 
