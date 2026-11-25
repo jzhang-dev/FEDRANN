@@ -12,8 +12,9 @@ jobs:
         submodules: true
 
     - name: Set up Conda
-      uses: conda-incubator/setup-miniconda@v2
+      uses: conda-incubator/setup-miniconda@v3
       with:
+        miniforge-version: latest
         environment-file: environment.yml
 
     - name: Build kmer_searcher
